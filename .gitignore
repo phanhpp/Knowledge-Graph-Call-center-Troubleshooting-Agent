@@ -22,3 +22,6 @@ Thumbs.db
 
 # Claude Code local state (machine-specific, not shared)
 .claude/settings.local.json
+
+# Saved conversations (LangGraph SQLite checkpointer)
+checkpoints.db*

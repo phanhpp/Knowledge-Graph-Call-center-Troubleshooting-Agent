@@ -7,6 +7,7 @@ fall back to the local Neo4j Desktop defaults already confirmed in this repo.
 from dataclasses import dataclass
 from functools import lru_cache
 import os
+import sqlite3
 
 from dotenv import load_dotenv
 
@@ -53,3 +54,19 @@ def get_driver():
 
     cfg = get_neo4j_config()
     return GraphDatabase.driver(cfg.uri, auth=(cfg.username, cfg.password))
+
+
+@lru_cache(maxsize=1)
+def get_checkpointer():
+    """One SQLite-backed checkpointer for the whole process, so saved conversations survive a restart.
+
+    The file is CHECKPOINT_DB (default checkpoints.db). check_same_thread=False is safe because
+    SqliteSaver guards the shared connection with its own lock, and the Slack handlers run on several
+    threads. Give the graph a thread_id per conversation whenever it is compiled with this.
+    """
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    # `or`, not a default argument: a blank CHECKPOINT_DB= line would otherwise open a throwaway
+    # in-memory database and silently lose every conversation.
+    conn = sqlite3.connect(os.environ.get("CHECKPOINT_DB") or "checkpoints.db", check_same_thread=False)
+    return SqliteSaver(conn)

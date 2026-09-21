@@ -10,14 +10,19 @@ dependencies = [
     "langchain-anthropic",
     "neo4j-graphrag[anthropic,openai]>=1.18.0",
     "langsmith",
+    "slack-bolt>=1.21.0",
+    "langgraph-checkpoint-sqlite>=3.1.1",
 ]
 # No deepagents — Phase 4/5 use plain LangGraph nodes, not the deepagents
 # ReAct/agent abstraction (see agent/procedural_executor.py's module
-# docstring for why). langgraph-checkpoint-sqlite will be added when Phase 7
-# actually wires a checkpointer into build_supervisor_graph().
+# docstring for why). No langgraph-checkpoint-sqlite: each request is answered on
+# its own, so there is no saved conversation state to keep.
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: full-graph tests (real Neo4j, and real Claude/OpenAI calls where the path needs them)",
+]
