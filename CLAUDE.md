@@ -52,7 +52,7 @@ When generating or modifying the synthetic datasets described in `docs/input_pla
 5. **Rules** — `applies_to_action_ids` reference step 3's action IDs
 6. **KB articles** — reference rule IDs from step 5
 
-### Planned project layout (docs/proposed_plan.md, not yet created)
+### Project layout (per docs/proposed_plan.md; Phase 0-5 files now exist)
 
 ```
 data/    — crm_records.json, conditions.json, actions.json, procedures.json, rules.json, kb_articles.json
@@ -63,4 +63,6 @@ mock_crm/ — crm_store.py
 
 ETL loads via Python driver batch writes (`UNWIND $rows AS row CALL (row) {...} IN TRANSACTIONS`), not `apoc.load.json` — the data is already Python-validated local JSON, not something Neo4j needs to fetch itself. Uniqueness/node-key constraints on every `MERGE`-targeted label are created before import (see `docs/proposed_plan.md` Phase 2).
 
-Stack: LangGraph + LangChain (agent orchestration), Neo4j (graph + native vector index) + `neo4j-graphrag` (retrieval), LangSmith (tracing/eval from day one), Deep Agents SDK, Anthropic models.
+Stack: LangGraph (plain nodes — no `deepagents`, see below), Neo4j (graph + native vector index) + `neo4j-graphrag` (retrieval), LangSmith (tracing/eval from day one), Anthropic models.
+
+**The Procedural Executor (`agent/procedural_executor.py`) is almost entirely deterministic, with one deliberate exception.** Conditions come in 3 kinds — see `docs/data_schema.md` — `field_check` (one API) and `chain_check` (a *declared*, ordered multi-call chain, e.g. zip → outage-by-zip) are both still code, no agent framework, since the call sequence is always known in advance: nothing to Plan/parallelize, nothing ambiguous to Replan around. `ticket_text` is the exception: interpreting a free-text ticket description is language understanding, not a lookup, so `agent/ticket_interpreter.py` genuinely calls an LLM there — and it's also the one place Replanning is real (a low-confidence first pass retries once with more evidence), not decorative. `advance_or_resolve()` (the routing after either evaluator sets `condition_result`) returns a `Command`, not a plain conditional edge, because looping back to `fetch_step` requires advancing `current_step_id` first — a conditional edge can pick the next node but can't also update state, which caused a real infinite-loop bug during implementation (see `tests/test_procedural_executor.py`).
