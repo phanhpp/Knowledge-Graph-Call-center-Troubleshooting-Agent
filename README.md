@@ -29,21 +29,22 @@ Procedure PROC-001  "Customer cannot activate roaming"
 - One kind of condition is different. It asks Claude to read the customer's latest ticket instead of checking a field.
 - A **Rule** is a policy limit on an action, such as "Tier 2 escalations require a documented troubleshooting summary". If an action has one, the answer cites it.
 
-
-
 ## What comes back
 
-Every request returns `answer` (the text for the consultant) and `citations` (the action's ID, then the IDs of any rules that limit it).
+The reply is the agent's last message: its text for the consultant, with `citations` on the message (the action's ID, then the IDs of any rules that limit it). `reply_of(state)` in `agent/state.py` reads both.
 
 In `data/procedures.json`, every step has `action_if_true_id` and the **last step of every procedure also has** `action_if_false_id`**.** 
 
-Two cases are easy to confuse:
+Three cases are easy to confuse:
 
 
 | Case                    | When it happens                                                                                                     | What is returned                                                                                                                                                 | Where                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | **Message B**           | The agent can't find the matching procedure. For example, `classify_intent` returned a wrong or empty procedure ID. | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
 | **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                             | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
+| **Unknown customer ID** | The `customer_id` is not in the CRM. This is checked first, before Claude is called. | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why) | `handle_crm_error`, `agent/supervisor.py` |
+
+
 
 
 ## How it is stored in Neo4j
@@ -80,13 +81,14 @@ Two cases are easy to confuse:
 **Answer** (every request). "Claude" and "OpenAI" mark the language-model calls:
 
 ```
-                          consultant: query + customer_id
+                          consultant: message + customer_id
                                          |
                                          v
                     inject_crm: load the customer's record (mock_crm/crm_store.py)
+                    unknown customer_id: reply "I couldn't find a customer..." and stop
                                          |
                                          v
-            classify_intent (Claude): reads the query, procedure names, KB titles
+            classify_intent (Claude): reads the messages and the procedure list
                                          |
   +--------------------------------------+------+
   | troubleshooting + procedure id              | open_ended
@@ -127,6 +129,56 @@ Two cases are easy to confuse:
 
 Example: customer `CUST-1005` asks "Customer cannot activate roaming". The answer is NO at steps 1, 2 and 3, so the agent returns `Escalate to Tier 2 - unresolved by standard checks` with citations `["ACT-015", "R012"]`.
 
+Note: Rules just for citations, it's doesn't affect how agent traverse the graph.
+
+**Slack** (how a command reaches the agent). Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
+
+```
+ Slack workspace
+   |  consultant types: /agent CUST-1005 customer cannot activate roaming
+   |
+   |  (1) Slack pushes the command over a websocket that the bot opened itself (app token, xapp-)
+   v
+ slack_bot/app.py       one Python process on your machine: uv run python -m slack_bot
+   |                    acknowledges within Slack's 3 seconds ("Checking..."), then splits the text
+   |                    into customer_id "CUST-1005" and the question
+   |
+   |  (2) ask(question, customer_id)          an ordinary function call in the same process
+   v
+ agent/supervisor.py    the same graph as above
+   |
+   +--> Neo4j           steps, actions, rules, KB articles (the URI in .env)
+   +--> data/*.json     CRM records and conditions
+   +--> Claude, OpenAI  the language-model calls
+   |
+   |  (3) returns {"answer": ..., "citations": [...]}
+   v
+ slack_bot/app.py       formats it as a Slack message
+   |
+   |  (4) sends it to the reply URL Slack included with the command, replacing "Checking..."
+   v
+ Slack workspace        only the person who typed the command sees the reply
+```
+
+A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages, the customer and the last trace are saved between messages. A message naming a different customer deletes that conversation and starts again.
+
+## Follow-up questions
+
+A conversation is one case. The agent is compiled with a checkpointer, and each conversation has its own `thread_id`, so the state is saved between messages: `messages` (the whole conversation), `customer_id`, and `step_trace` (what the last procedure walk checked, with the action it gave). A third path, `explain`, answers questions about the previous answer:
+
+```
+ message 1  "CUST-1005 customer cannot activate roaming"   -> procedure walk -> reply: ACT-015, R012
+            saved: the reply, and step_trace (each step, YES or NO, the value it used, the action)
+ message 2  "what does that rule say?"    (no customer ID) -> explain: the rule's wording from Neo4j
+ message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values from step_trace
+ message 4  "What is the SIM replacement fee?"              -> knowledge-base search (the latest message only)
+ message 5  "Reported service outage in customer's area"    -> a new walk; step_trace now describes it
+```
+
+`explain` gathers the facts in plain code (the trace, plus the action and rule text from Neo4j) and Claude words the answer from those only. The trace records what was true when the answer was given. It is not a cache: every new question re-checks the customer's data.
+
+Without a checkpointer every call is a single question (that is what `/agent` and `graph.invoke(...)` do). The Slack bot saves conversations in `checkpoints.db` (`config.get_checkpointer()`, SQLite).
+
 ## Run it
 
 You need Python 3.11+, [uv](https://docs.astral.sh/uv/) and a local Neo4j 5.18.1 or newer (`neo4j-graphrag` refuses older ones). Developed on 5.26.7. Copy `.env.example` to `.env` and fill it in.
@@ -137,7 +189,9 @@ uv run python -m etl.validate        # checks data/ (no Neo4j, no keys)
 uv run python -m etl.load_to_neo4j   # builds the graph (Neo4j)
 uv run python -m etl.audit_graph     # checks the graph matches data/ (Neo4j)
 uv run python -m etl.load_articles   # embeds KB articles (Neo4j + OPENAI_API_KEY)
-uv run pytest                        # 42 tests (needs the graph and articles loaded)
+uv run pytest                        # 163 tests (needs the graph and articles loaded)
+uv run pytest -m "not e2e"           # skip the end-to-end tests
+uv run python -m slack_bot           # start the Slack bot: /agent and direct messages (needs Slack tokens, see slack_bot/slack_setup.md)
 ```
 
 ```python
@@ -152,11 +206,10 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Test
 
 ## Status
 
-- **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, and the open-ended path (answers with citations).
-- **Not built:** an entry point (`main.py`), saved conversation state, and a UI.
-- **Known issue:** an unknown `customer_id` gets the message "I couldn't find a matching procedure", which hides the real cause.
-
-
+- **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, the open-ended path, and follow-up questions in a saved conversation.
+- **`classify_intent` is a placeholder.** It works, but it is meant to be replaced. It shows Claude the procedure list and the conversation, and it can misroute a policy question that sounds like a procedure (for example early termination fees).
+- **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but not yet run against a real workspace. That needs your Slack tokens (see `slack_bot/slack_setup.md`).
+- **Not built:** Microsoft Teams (it needs a public HTTPS endpoint and an Azure Bot registration). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
 
 ## Repo map
 
@@ -165,6 +218,8 @@ data/        synthetic JSON (the source of truth)
 etl/         validate the JSON, load it into Neo4j, audit the graph, embed KB articles
 mock_crm/    the fake CRM and lookup APIs (see mock_crm/README.md)
 agent/       supervisor, procedural executor (the walk above), ticket reader, open-ended search
-tests/
+slack_bot/   the Slack front end (see slack_bot/README.md)
+tests/       unit and integration tests; tests/e2e/ has the full-graph tests, grouped as
+             troubleshooting/, open_ended/ and errors/; tests/slack_bot/ has the Slack tests
 ```
 
