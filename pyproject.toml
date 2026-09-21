@@ -1,0 +1,23 @@
+[project]
+name = "super-agent-kg"
+version = "0.1.0"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "neo4j>=5.17",
+    "python-dotenv>=1.0",
+    "langgraph",
+    "langchain",
+    "langchain-anthropic",
+    "neo4j-graphrag[anthropic,openai]>=1.18.0",
+    "langsmith",
+]
+# No deepagents — Phase 4/5 use plain LangGraph nodes, not the deepagents
+# ReAct/agent abstraction (see agent/procedural_executor.py's module
+# docstring for why). langgraph-checkpoint-sqlite will be added when Phase 7
+# actually wires a checkpointer into build_supervisor_graph().
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
