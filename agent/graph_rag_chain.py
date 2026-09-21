@@ -2,7 +2,7 @@
 
 Flow of one graph_rag_chain() call:
 
-    query text
+    the consultant's latest message (the query text; earlier messages are not used)
       |
       1. embed the query                       OpenAI text-embedding-3-small (1536 numbers)
       |
@@ -28,7 +28,7 @@ Flow of one graph_rag_chain() call:
       |
       5. Claude writes the answer              claude-sonnet-5, from those 5 articles only.
       |
-      6. return {"answer": text, "citations": [article ids, then rule ids]}
+      6. return the answer as the reply, citing each article id followed by its rule ids
 
 Why both searches: the vector search finds a paraphrase ("cancel my contract" matches "early
 termination fees"), and the fulltext search finds exact terms the embedding can blur (a plan name
@@ -56,7 +56,7 @@ from neo4j_graphrag.llm import AnthropicLLM
 from neo4j_graphrag.retrievers import HybridCypherRetriever
 from neo4j_graphrag.types import RetrieverResultItem
 
-from agent.state import SuperAgentState
+from agent.state import SuperAgentState, reply
 from config import get_driver
 
 # Appended by neo4j-graphrag after the hybrid search; `node` is one matched Article and `score`
@@ -107,14 +107,17 @@ def _get_rag() -> GraphRAG:
 
 
 def graph_rag_chain(state: SuperAgentState) -> dict:
-    """Search the KB articles for state["query"], then have Claude answer from them.
+    """Search the KB articles, then have Claude answer from them.
 
-    Returns {"answer": str, "citations": [...]}: each retrieved article's ID followed by the IDs of
-    the rules it cites (a rule shared by several articles is listed once). This covers all 5
-    retrieved articles, not only the ones Claude relied on.
+    The query text is the latest message in state["messages"]. The earlier messages are not passed
+    to the search, so it sees the question exactly as typed.
+
+    Returns the reply (see agent/state.py reply()). Its citations are each retrieved article's ID
+    followed by the IDs of the rules it cites (a rule shared by several articles is listed once).
+    This covers all 5 retrieved articles, not only the ones Claude relied on.
     """
     response = _get_rag().search(
-        query_text=state["query"],
+        query_text=str(state["messages"][-1].content),
         retriever_config={"top_k": 5},
         return_context=True,
     )
@@ -130,4 +133,4 @@ def graph_rag_chain(state: SuperAgentState) -> dict:
                 if rule_id not in citations:
                     citations.append(rule_id)
 
-    return {"answer": response.answer, "citations": citations}
+    return reply(response.answer, citations)
