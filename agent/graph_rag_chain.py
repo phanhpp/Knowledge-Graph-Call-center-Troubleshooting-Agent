@@ -1,34 +1,66 @@
-"""Open-ended path — Phase 6. HybridCypherRetriever (vector + fulltext +
-graph grounding) + GraphRAG synthesis, per docs/proposed_plan.md Phase 6 and
-docs/neo4j_vectorindex.md.
+"""Open-ended path: answer a question from the knowledge-base articles, with citations.
 
-The retrieval_query below *is* the Neo4j grounding step, not a separate
-post-processing pass: for each matched Article it pulls the Rule nodes it
-cites (via CITES_RULE, linked at etl/load_articles.py load time) in the
-same call that does the vector/fulltext search.
+Flow of one graph_rag_chain() call:
 
-Built lazily on first call (driver/retriever/rag), not at import time —
-verified this matters: agent/supervisor.py imports this module
-unconditionally, so eagerly constructing OpenAIEmbeddings() at import time
-crashed *every* caller of agent.supervisor with OpenAIError whenever
-OPENAI_API_KEY was unset, even for code paths that never touch the
-open-ended path at all. Cached with lru_cache so it's still only built once
-per process, same "one Driver per app" principle as config.get_driver().
+    query text
+      |
+      1. embed the query                       OpenAI text-embedding-3-small (1536 numbers)
+      |
+      2. hybrid search over Article nodes      two searches in Neo4j, run together:
+      |                                          - vector index   kb_article_embedding
+      |                                              finds articles close in meaning to the query
+      |                                          - fulltext index kb_article_fulltext
+      |                                              finds articles that share words with the query
+      |                                        Each search's scores are divided by its own best
+      |                                        score (its best hit becomes 1.0), the two lists are
+      |                                        merged, an article found by both keeps its higher
+      |                                        score, and the top 5 are kept. This is
+      |                                        neo4j-graphrag's default "naive" ranker; we do not
+      |                                        set another one.
+      |
+      3. graph grounding                       _RETRIEVAL_QUERY runs right after the search, in the
+      |                                        same Cypher call: for each of the 5 articles it
+      |                                        follows CITES_RULE to the Rules that article cites.
+      |
+      4. format for Claude                     _format_article turns each row into the text Claude
+      |                                        reads (id, title, body, cited rule IDs) and keeps
+      |                                        the IDs in metadata for the citations.
+      |
+      5. Claude writes the answer              claude-sonnet-5, from those 5 articles only.
+      |
+      6. return {"answer": text, "citations": [article ids, then rule ids]}
 
-Requires OPENAI_API_KEY (embedder) and ANTHROPIC_API_KEY (synthesis) in .env
-— but only once graph_rag_chain() is actually called, not on import.
+Why both searches: the vector search finds a paraphrase ("cancel my contract" matches "early
+termination fees"), and the fulltext search finds exact terms the embedding can blur (a plan name
+like "Unlimited Plus", or "eSIM"). An article that ranks well in either one is kept.
+
+Rules only appear here as IDs: they are returned in `citations` and shown to Claude by ID. They
+do not filter or change which articles are found.
+
+Needs, before the first call:
+  - Neo4j 5.18.1 or newer. neo4j-graphrag refuses to build a retriever on an older server.
+  - the two indexes and the Article nodes: `uv run python -m etl.load_articles`
+  - OPENAI_API_KEY (query embedding) and ANTHROPIC_API_KEY (the answer) in .env
+
+The retriever and Claude client are built on the first call, not at import time.
+agent/supervisor.py imports this module unconditionally, so building them at import crashed every
+caller with an OpenAIError whenever OPENAI_API_KEY was unset.
 """
 
 from functools import lru_cache
 
+import neo4j
 from neo4j_graphrag.embeddings import OpenAIEmbeddings
 from neo4j_graphrag.generation import GraphRAG
 from neo4j_graphrag.llm import AnthropicLLM
 from neo4j_graphrag.retrievers import HybridCypherRetriever
+from neo4j_graphrag.types import RetrieverResultItem
 
 from agent.state import SuperAgentState
 from config import get_driver
 
+# Appended by neo4j-graphrag after the hybrid search; `node` is one matched Article and `score`
+# is its ranked score.
 _RETRIEVAL_QUERY = """
 MATCH (node)
 OPTIONAL MATCH (node)-[:CITES_RULE]->(r:Rule)
@@ -38,6 +70,20 @@ RETURN node.title AS title,
        collect(DISTINCT r.ruleId) AS ruleIds,
        score
 """
+
+_MAX_ANSWER_TOKENS = 1024
+
+
+def _format_article(record: neo4j.Record) -> RetrieverResultItem:
+    """Turn one retrieved row into the text Claude reads plus the IDs to cite."""
+    rule_ids = [r for r in record["ruleIds"] if r]
+    content = f"[{record['articleId']}] {record['title']}\n{record['content']}"
+    if rule_ids:
+        content += f"\nPolicy rules cited by this article: {', '.join(rule_ids)}"
+    return RetrieverResultItem(
+        content=content,
+        metadata={"articleId": record["articleId"], "ruleIds": rule_ids, "score": record["score"]},
+    )
 
 
 @lru_cache(maxsize=1)
@@ -49,33 +95,39 @@ def _get_rag() -> GraphRAG:
         fulltext_index_name="kb_article_fulltext",
         retrieval_query=_RETRIEVAL_QUERY,
         embedder=OpenAIEmbeddings(model="text-embedding-3-small"),
+        result_formatter=_format_article,
     )
-    return GraphRAG(retriever=retriever, llm=AnthropicLLM(model_name="claude-sonnet-5"))
+    # thinking disabled: neo4j-graphrag only accepts a reply whose first block is text, and this
+    # model sometimes opens with a thinking block, which made the call fail.
+    llm = AnthropicLLM(
+        model_name="claude-sonnet-5",
+        model_params={"max_tokens": _MAX_ANSWER_TOKENS, "thinking": {"type": "disabled"}},
+    )
+    return GraphRAG(retriever=retriever, llm=llm)
 
 
 def graph_rag_chain(state: SuperAgentState) -> dict:
-    """Vector + fulltext search over KB Articles, grounded by their cited
-    Rules, synthesized into an answer."""
+    """Search the KB articles for state["query"], then have Claude answer from them.
+
+    Returns {"answer": str, "citations": [...]}: each retrieved article's ID followed by the IDs of
+    the rules it cites (a rule shared by several articles is listed once). This covers all 5
+    retrieved articles, not only the ones Claude relied on.
+    """
     response = _get_rag().search(
         query_text=state["query"],
         retriever_config={"top_k": 5},
         return_context=True,
     )
 
-    # NOTE: the exact shape of response.retriever_result.items[i].metadata
-    # hasn't been empirically verified yet — no OPENAI_API_KEY was available
-    # while writing this, so this couldn't be run against the real API.
-    # Confirm this parsing once a live run is possible; adjust if
-    # `metadata` isn't a flat dict of the retrieval_query's RETURN columns.
     citations: list[str] = []
     if response.retriever_result is not None:
         for item in response.retriever_result.items:
-            metadata = getattr(item, "metadata", {}) or {}
+            metadata = item.metadata or {}
             article_id = metadata.get("articleId")
             if article_id:
                 citations.append(article_id)
-            for rule_id in metadata.get("ruleIds") or []:
-                if rule_id and rule_id not in citations:
+            for rule_id in metadata.get("ruleIds", []):
+                if rule_id not in citations:
                     citations.append(rule_id)
 
     return {"answer": response.answer, "citations": citations}
