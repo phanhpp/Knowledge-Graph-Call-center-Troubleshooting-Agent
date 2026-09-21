@@ -1,0 +1,68 @@
+# Data-integrity PR gate: catches two bug classes that etl/validate.py's
+# other checks and unit tests don't cover on their own —
+#   1. a cyclic or unresolvable procedure (etl.validate's check_procedure_resolvable,
+#      pure JSON, no Neo4j needed)
+#   2. graph drift after a data edit + reload (etl.audit_graph, needs a live
+#      Neo4j — this is what would have caught a real bug this project hit:
+#      editing a step's condition_id and reloading left the *old*
+#      HAS_CONDITION edge dangling, since MERGE only adds relationships,
+#      never retracts them)
+#
+# Plain Community-edition Neo4j is enough here (no Enterprise license
+# needed) because the schema uses a composite UNIQUE constraint on Step,
+# not NODE KEY, which is Enterprise-only and wasn't buying anything anyway.
+#
+# Deliberately does NOT run the full pytest suite: several tests call live
+# Anthropic/OpenAI APIs, which would need paid secrets and per-PR API cost —
+# a separate decision from this data-integrity gate.
+
+name: Data Integrity
+
+on:
+  pull_request:
+    paths:
+      - "data/**"
+      - "etl/**"
+      - "mock_crm/**"
+
+jobs:
+  validate-and-audit:
+    runs-on: ubuntu-latest
+
+    services:
+      neo4j:
+        image: neo4j:5.17
+        env:
+          NEO4J_AUTH: neo4j/ci-test-password
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-test-password 'RETURN 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
+    env:
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ci-test-password
+      NEO4J_DATABASE: neo4j
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: "Tier 1: JSON validation (cycles, reachability, references)"
+        run: uv run python -m etl.validate
+
+      - name: Load data into ephemeral CI Neo4j
+        run: uv run python -m etl.load_to_neo4j
+
+      - name: "Tier 2: live-graph audit"
+        run: uv run python -m etl.audit_graph
