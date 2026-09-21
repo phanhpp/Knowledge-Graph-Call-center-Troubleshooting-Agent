@@ -1,0 +1,12 @@
+[
+  {"zip_code": "94103", "outage_active": true},
+  {"zip_code": "10001", "outage_active": false},
+  {"zip_code": "60614", "outage_active": false},
+  {"zip_code": "73301", "outage_active": true},
+  {"zip_code": "94016", "outage_active": false},
+  {"zip_code": "30301", "outage_active": false},
+  {"zip_code": "78701", "outage_active": true},
+  {"zip_code": "98101", "outage_active": false},
+  {"zip_code": "20001", "outage_active": false},
+  {"zip_code": "02108", "outage_active": false}
+]

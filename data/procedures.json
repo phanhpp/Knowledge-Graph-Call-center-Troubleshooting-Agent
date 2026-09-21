@@ -1,0 +1,99 @@
+[
+  {"procedure_id": "PROC-001", "procedure_name": "Customer cannot activate roaming", "category": "roaming", "steps": [
+    {"step_id": 1, "description": "Check if roaming is enabled on the account", "condition_id": "COND-001", "action_if_true_id": "ACT-001", "next_step": 2},
+    {"step_id": 2, "description": "Check if customer's plan is inactive", "condition_id": "COND-003", "action_if_true_id": "ACT-002", "next_step": 3},
+    {"step_id": 3, "description": "Check device roaming compatibility", "condition_id": "COND-007", "action_if_true_id": "ACT-019", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-002", "procedure_name": "International roaming charges dispute", "category": "roaming", "steps": [
+    {"step_id": 1, "description": "Check if outstanding balance exceeds $50", "condition_id": "COND-016", "action_if_true_id": "ACT-011", "next_step": 2},
+    {"step_id": 2, "description": "Check if payment method is prepaid", "condition_id": "COND-021", "action_if_true_id": "ACT-003", "next_step": 3},
+    {"step_id": 3, "description": "Check if customer has an unresolved prior ticket on this issue", "condition_id": "COND-020", "action_if_true_id": "ACT-016", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-003", "procedure_name": "Unexpected charge on monthly invoice", "category": "billing", "steps": [
+    {"step_id": 1, "description": "Check if outstanding balance exceeds $50", "condition_id": "COND-016", "action_if_true_id": "ACT-011", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment attempt failed", "condition_id": "COND-008", "action_if_true_id": "ACT-009", "next_step": 3},
+    {"step_id": 3, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": null, "action_if_false_id": "ACT-016"}
+  ]},
+  {"procedure_id": "PROC-004", "procedure_name": "Customer disputes a specific billing line item", "category": "billing", "steps": [
+    {"step_id": 1, "description": "Check if account balance is zero", "condition_id": "COND-017", "action_if_true_id": "ACT-022", "next_step": 2},
+    {"step_id": 2, "description": "Check if payment method is bank transfer", "condition_id": "COND-022", "action_if_true_id": "ACT-011", "next_step": 3},
+    {"step_id": 3, "description": "Check if the customer's ticket description specifically requests a refund or credit", "condition_id": "COND-028", "action_if_true_id": "ACT-016", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-005", "procedure_name": "Account suspended for non-payment", "category": "billing", "steps": [
+    {"step_id": 1, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment attempt failed", "condition_id": "COND-008", "action_if_true_id": "ACT-009", "next_step": 3},
+    {"step_id": 3, "description": "Check if account is closed", "condition_id": "COND-015", "action_if_true_id": "ACT-022", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-006", "procedure_name": "SIM card not recognized by device", "category": "sim", "steps": [
+    {"step_id": 1, "description": "Check if SIM status is blocked", "condition_id": "COND-011", "action_if_true_id": "ACT-018", "next_step": 2},
+    {"step_id": 2, "description": "Check if SIM status is not activated", "condition_id": "COND-012", "action_if_true_id": "ACT-004", "next_step": 3},
+    {"step_id": 3, "description": "Check if SIM status is otherwise active but device still fails", "condition_id": "COND-013", "action_if_true_id": "ACT-012", "next_step": null, "action_if_false_id": "ACT-018"}
+  ]},
+  {"procedure_id": "PROC-007", "procedure_name": "Customer requests SIM replacement", "category": "sim", "steps": [
+    {"step_id": 1, "description": "Check if SIM status is blocked", "condition_id": "COND-011", "action_if_true_id": "ACT-018", "next_step": 2},
+    {"step_id": 2, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": null, "action_if_false_id": "ACT-018"}
+  ]},
+  {"procedure_id": "PROC-008", "procedure_name": "Recurring payment method failure", "category": "payment", "steps": [
+    {"step_id": 1, "description": "Check if last payment attempt failed", "condition_id": "COND-008", "action_if_true_id": "ACT-009", "next_step": 2},
+    {"step_id": 2, "description": "Check if payment method is prepaid", "condition_id": "COND-021", "action_if_true_id": "ACT-003", "next_step": 3},
+    {"step_id": 3, "description": "Check if last payment is still pending", "condition_id": "COND-009", "action_if_true_id": "ACT-010", "next_step": 4},
+    {"step_id": 4, "description": "Check if customer has multiple unresolved tickets suggesting fraud", "condition_id": "COND-020", "action_if_true_id": "ACT-021", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-009", "procedure_name": "Suspicious charge, possible fraud", "category": "payment", "steps": [
+    {"step_id": 1, "description": "Check if the payment gateway flags this account as high fraud risk", "condition_id": "COND-026", "action_if_true_id": "ACT-021", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment attempt failed", "condition_id": "COND-008", "action_if_true_id": "ACT-009", "next_step": null, "action_if_false_id": "ACT-021"}
+  ]},
+  {"procedure_id": "PROC-010", "procedure_name": "Prepaid balance depleted unexpectedly", "category": "payment", "steps": [
+    {"step_id": 1, "description": "Check if payment method is prepaid", "condition_id": "COND-021", "action_if_true_id": "ACT-003", "next_step": 2},
+    {"step_id": 2, "description": "Check if account balance is zero", "condition_id": "COND-017", "action_if_true_id": "ACT-003", "next_step": 3},
+    {"step_id": 3, "description": "Check if customer has an unresolved billing ticket", "condition_id": "COND-020", "action_if_true_id": "ACT-011", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-011", "procedure_name": "Customer wants to change data plan", "category": "plan", "steps": [
+    {"step_id": 1, "description": "Check if plan status is inactive", "condition_id": "COND-003", "action_if_true_id": "ACT-002", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment is still pending", "condition_id": "COND-009", "action_if_true_id": "ACT-010", "next_step": 3},
+    {"step_id": 3, "description": "Check if tenure is 24+ months (loyalty eligible)", "condition_id": "COND-019", "action_if_true_id": "ACT-020", "next_step": null, "action_if_false_id": "ACT-014"}
+  ]},
+  {"procedure_id": "PROC-012", "procedure_name": "New plan activation delayed", "category": "plan", "steps": [
+    {"step_id": 1, "description": "Check if plan status is pending", "condition_id": "COND-004", "action_if_true_id": "ACT-010", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment attempt failed", "condition_id": "COND-008", "action_if_true_id": "ACT-009", "next_step": 3},
+    {"step_id": 3, "description": "Check if tenure is under 3 months (new customer onboarding issue)", "condition_id": "COND-018", "action_if_true_id": "ACT-010", "next_step": null, "action_if_false_id": "ACT-015"}
+  ]},
+  {"procedure_id": "PROC-013", "procedure_name": "Contract cancellation request", "category": "plan", "steps": [
+    {"step_id": 1, "description": "Check if customer still owes an outstanding device installment balance (IMEI -> financing lookup)", "condition_id": "COND-025", "action_if_true_id": "ACT-026", "next_step": 2},
+    {"step_id": 2, "description": "Check if account balance is zero", "condition_id": "COND-017", "action_if_true_id": "ACT-025", "next_step": 3},
+    {"step_id": 3, "description": "Check if outstanding balance exceeds $50", "condition_id": "COND-016", "action_if_true_id": "ACT-011", "next_step": 4},
+    {"step_id": 4, "description": "Check if tenure is 24+ months (waiver eligible)", "condition_id": "COND-019", "action_if_true_id": "ACT-025", "next_step": null, "action_if_false_id": "ACT-025"}
+  ]},
+  {"procedure_id": "PROC-014", "procedure_name": "Device shows no roaming bars abroad", "category": "device", "steps": [
+    {"step_id": 1, "description": "Check device roaming compatibility", "condition_id": "COND-006", "action_if_true_id": "ACT-005", "next_step": 2},
+    {"step_id": 2, "description": "Check if roaming is disabled on the account", "condition_id": "COND-001", "action_if_true_id": "ACT-001", "next_step": 3},
+    {"step_id": 3, "description": "Check if device is otherwise roaming-compatible", "condition_id": "COND-007", "action_if_true_id": "ACT-019", "next_step": null, "action_if_false_id": "ACT-013"}
+  ]},
+  {"procedure_id": "PROC-015", "procedure_name": "Device malfunction after firmware update", "category": "device", "steps": [
+    {"step_id": 1, "description": "Check device roaming compatibility to rule out a roaming-specific issue", "condition_id": "COND-006", "action_if_true_id": "ACT-005", "next_step": 2},
+    {"step_id": 2, "description": "Check if SIM status is active", "condition_id": "COND-013", "action_if_true_id": "ACT-004", "next_step": null, "action_if_false_id": "ACT-013"}
+  ]},
+  {"procedure_id": "PROC-016", "procedure_name": "Reported service outage in customer's area", "category": "outage", "steps": [
+    {"step_id": 1, "description": "Check for a confirmed active network outage in the customer's service area (ZIP lookup, then outage-by-ZIP check)", "condition_id": "COND-023", "action_if_true_id": "ACT-006", "next_step": 2},
+    {"step_id": 2, "description": "Check if SIM status is active", "condition_id": "COND-013", "action_if_true_id": "ACT-006", "next_step": 3},
+    {"step_id": 3, "description": "Check if account is suspended (rule out account-side cause)", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": null, "action_if_false_id": "ACT-024"}
+  ]},
+  {"procedure_id": "PROC-017", "procedure_name": "Customer requests service credit for outage", "category": "outage", "steps": [
+    {"step_id": 1, "description": "Check if the customer's most recent ticket description indicates the outage issue is still ongoing", "condition_id": "COND-024", "action_if_true_id": "ACT-006", "next_step": 2},
+    {"step_id": 2, "description": "Check if outstanding balance exceeds $50", "condition_id": "COND-016", "action_if_true_id": "ACT-011", "next_step": null, "action_if_false_id": "ACT-024"}
+  ]},
+  {"procedure_id": "PROC-018", "procedure_name": "Customer locked out of online account", "category": "account_access", "steps": [
+    {"step_id": 1, "description": "Verify customer identity before any account changes", "condition_id": "COND-020", "action_if_true_id": "ACT-007", "next_step": 2},
+    {"step_id": 2, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": 3},
+    {"step_id": 3, "description": "Check if account is closed", "condition_id": "COND-015", "action_if_true_id": "ACT-022", "next_step": null, "action_if_false_id": "ACT-017"}
+  ]},
+  {"procedure_id": "PROC-019", "procedure_name": "Suspected unauthorized account access", "category": "account_access", "steps": [
+    {"step_id": 1, "description": "Check if the customer's ticket description suggests unauthorized or suspicious activity", "condition_id": "COND-027", "action_if_true_id": "ACT-007", "next_step": 2},
+    {"step_id": 2, "description": "Check if last payment attempt failed (possible fraud indicator)", "condition_id": "COND-008", "action_if_true_id": "ACT-021", "next_step": null, "action_if_false_id": "ACT-017"}
+  ]},
+  {"procedure_id": "PROC-020", "procedure_name": "Login app repeatedly fails after password reset", "category": "account_access", "steps": [
+    {"step_id": 1, "description": "Direct customer to clear cached app data and retry login", "condition_id": "COND-020", "action_if_true_id": "ACT-008", "next_step": 2},
+    {"step_id": 2, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": 3},
+    {"step_id": 3, "description": "Check if SIM status is active (rule out device-side 2FA delivery issue)", "condition_id": "COND-013", "action_if_true_id": "ACT-008", "next_step": null, "action_if_false_id": "ACT-017"}
+  ]}
+]

@@ -1,0 +1,1579 @@
+[
+  {
+    "customer_id": "CUST-1001",
+    "name": "Jane Doe",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643801",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-03-15",
+    "tenure_months": 34,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1002",
+    "name": "Marcus Chen",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643802",
+      "model": "Samsung Galaxy S23",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 18.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-02",
+    "tenure_months": 12,
+    "recent_tickets": [
+      {
+        "date": "2026-08-20",
+        "issue": "roaming activation",
+        "resolved": false,
+        "description": "Customer called back saying roaming still isn't working two days after we enabled it."
+      }
+    ],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1003",
+    "name": "Priya Nair",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643803",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 96.2,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-06-30",
+    "tenure_months": 58,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1004",
+    "name": "Liam O'Brien",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "inactive",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643804",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "pending"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-01",
+    "tenure_months": 6,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1005",
+    "name": "Amara Okafor",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643805",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": false
+    },
+    "billing": {
+      "current_balance": 12.3,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-01-19",
+    "tenure_months": 21,
+    "recent_tickets": [
+      {
+        "date": "2026-07-11",
+        "issue": "device compatibility",
+        "resolved": true,
+        "description": "Customer confirmed the device works fine now after the software update."
+      }
+    ],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1006",
+    "name": "Diego Fernandez",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643806",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-10-05",
+    "tenure_months": 44,
+    "recent_tickets": [
+      {
+        "date": "2026-09-01",
+        "issue": "payment failed",
+        "resolved": false,
+        "description": "Customer says the payment error keeps appearing every time they try to pay."
+      }
+    ],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1007",
+    "name": "Sofia Rossi",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643807",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 8.75,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-28",
+    "tenure_months": 67,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1008",
+    "name": "Kwame Mensah",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "pending",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643808",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "pending"
+    },
+    "sim_status": "not_activated",
+    "contract_end_date": "2027-02-14",
+    "tenure_months": 1,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1009",
+    "name": "Nadia Petrova",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643809",
+      "model": "Google Pixel 7a",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 71.4,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-04-22",
+    "tenure_months": 29,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1010",
+    "name": "Tom\u00e1s Silva",
+    "account_status": "suspended",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643810",
+      "model": "Xiaomi 13",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 130.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "blocked",
+    "contract_end_date": "2026-10-11",
+    "tenure_months": 15,
+    "recent_tickets": [
+      {
+        "date": "2026-08-30",
+        "issue": "account suspended",
+        "resolved": false,
+        "description": "Customer disputes the suspension and wants it reviewed again."
+      }
+    ],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  },
+  {
+    "customer_id": "CUST-1011",
+    "name": "Helena Kowalski",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643811",
+      "model": "iPhone 15 Pro",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 22.1,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-07-08",
+    "tenure_months": 9,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1012",
+    "name": "Ravi Kapoor",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643812",
+      "model": "Samsung Galaxy S24",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 88.9,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-05-17",
+    "tenure_months": 52,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1013",
+    "name": "Isabelle Laurent",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643813",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-20",
+    "tenure_months": 3,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1014",
+    "name": "Yusuf Demir",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643814",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": false
+    },
+    "billing": {
+      "current_balance": 14.6,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-02-02",
+    "tenure_months": 18,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1015",
+    "name": "Grace Mwangi",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "inactive",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643815",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-25",
+    "tenure_months": 40,
+    "recent_tickets": [
+      {
+        "date": "2026-08-05",
+        "issue": "plan reactivation",
+        "resolved": false,
+        "description": "Not sure if this was ever fully resolved -- customer mentioned something about it still, but wasn't specific."
+      }
+    ],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1016",
+    "name": "Emil Andersson",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643816",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 9.2,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-30",
+    "tenure_months": 71,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1017",
+    "name": "Fatima Al-Sayed",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643817",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 75.0,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-08-19",
+    "tenure_months": 33,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1018",
+    "name": "Connor Murphy",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643818",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-01-05",
+    "tenure_months": 2,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1019",
+    "name": "Larisa Ionescu",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643819",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 20.5,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-12",
+    "tenure_months": 11,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1020",
+    "name": "Hassan Ali",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643820",
+      "model": "Samsung Galaxy S23",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-03-27",
+    "tenure_months": 27,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  },
+  {
+    "customer_id": "CUST-1021",
+    "name": "Chiara Bianchi",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643821",
+      "model": "iPhone 15 Pro",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 91.0,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-06-14",
+    "tenure_months": 49,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1022",
+    "name": "Boris Ivanov",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643822",
+      "model": "Xiaomi 13",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "not_activated",
+    "contract_end_date": "2026-11-30",
+    "tenure_months": 1,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1023",
+    "name": "Aiko Tanaka",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643823",
+      "model": "Google Pixel 7a",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 13.9,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-02-09",
+    "tenure_months": 16,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1024",
+    "name": "Elena Popescu",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643824",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": false
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-10-22",
+    "tenure_months": 46,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1025",
+    "name": "Samuel Osei",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643825",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 8.75,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-15",
+    "tenure_months": 63,
+    "recent_tickets": [
+      {
+        "date": "2026-08-27",
+        "issue": "billing dispute",
+        "resolved": false,
+        "description": "Customer is unhappy but agreed to wait for the next statement to see if the charge is corrected."
+      }
+    ],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1026",
+    "name": "Valentina Cruz",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643826",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 79.3,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-05-01",
+    "tenure_months": 37,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1027",
+    "name": "Mateusz Wozniak",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643827",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-01-28",
+    "tenure_months": 4,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1028",
+    "name": "Zara Khan",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "pending",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643828",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 19.8,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "pending"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-03",
+    "tenure_months": 8,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1029",
+    "name": "Oscar Lindqvist",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643829",
+      "model": "Samsung Galaxy S23",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-04-09",
+    "tenure_months": 25,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1030",
+    "name": "Meera Iyer",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643830",
+      "model": "iPhone 15 Pro",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 102.4,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-07-21",
+    "tenure_months": 55,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  },
+  {
+    "customer_id": "CUST-1031",
+    "name": "Adrian Kowalczyk",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643831",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-16",
+    "tenure_months": 5,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1032",
+    "name": "Wei Zhang",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643832",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 15.2,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "blocked",
+    "contract_end_date": "2027-02-25",
+    "tenure_months": 20,
+    "recent_tickets": [
+      {
+        "date": "2026-08-14",
+        "issue": "sim blocked",
+        "resolved": false,
+        "description": "Customer says the replacement SIM still won't unlock."
+      }
+    ],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1033",
+    "name": "Camila Duarte",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643833",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-10-30",
+    "tenure_months": 42,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1034",
+    "name": "Niklas Fischer",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643834",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 8.75,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-22",
+    "tenure_months": 69,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1035",
+    "name": "Aisha Bello",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "inactive",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643835",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 75.0,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-08-03",
+    "tenure_months": 31,
+    "recent_tickets": [
+      {
+        "date": "2026-08-22",
+        "issue": "plan status inquiry",
+        "resolved": false,
+        "description": "Customer just wanted to know their plan status, no complaint raised."
+      }
+    ],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1036",
+    "name": "Pedro Alves",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643836",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-01-11",
+    "tenure_months": 3,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1037",
+    "name": "Ingrid Solberg",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643837",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 21.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-27",
+    "tenure_months": 14,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1038",
+    "name": "Gabriel Santos",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643838",
+      "model": "Samsung Galaxy S24",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-03-08",
+    "tenure_months": 30,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1039",
+    "name": "Lucia Moreno",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643839",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 84.6,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-06-05",
+    "tenure_months": 47,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1040",
+    "name": "Tobias Meyer",
+    "account_status": "closed",
+    "plan_name": "Basic 5GB",
+    "plan_status": "inactive",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643840",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "not_activated",
+    "contract_end_date": "2026-06-30",
+    "tenure_months": 60,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  },
+  {
+    "customer_id": "CUST-1041",
+    "name": "Naledi Dlamini",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643841",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 14.0,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-02-17",
+    "tenure_months": 19,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1042",
+    "name": "Viktor Novak",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643842",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-08",
+    "tenure_months": 39,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1043",
+    "name": "Rosa Jimenez",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643843",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 9.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-19",
+    "tenure_months": 65,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1044",
+    "name": "Daniyar Nurlanov",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643844",
+      "model": "Google Pixel 7a",
+      "device_roaming_compatible": false
+    },
+    "billing": {
+      "current_balance": 76.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-04-30",
+    "tenure_months": 35,
+    "recent_tickets": [
+      {
+        "date": "2026-08-09",
+        "issue": "device compatibility",
+        "resolved": false,
+        "description": "Customer's device still shows no signal after the fix was applied."
+      }
+    ],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1045",
+    "name": "Freya Johansen",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643845",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-01-24",
+    "tenure_months": 2,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1046",
+    "name": "Idris Suleiman",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643846",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 23.4,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-15",
+    "tenure_months": 13,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1047",
+    "name": "Charlotte Dubois",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643847",
+      "model": "Samsung Galaxy S23",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-03-19",
+    "tenure_months": 28,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1048",
+    "name": "Arjun Reddy",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643848",
+      "model": "iPhone 15 Pro",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 95.8,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-06-22",
+    "tenure_months": 51,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1049",
+    "name": "Beatriz Fonseca",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643849",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-21",
+    "tenure_months": 7,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1050",
+    "name": "Sven Eriksson",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643850",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 16.1,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-02-28",
+    "tenure_months": 22,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  },
+  {
+    "customer_id": "CUST-1051",
+    "name": "Layla Haddad",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643851",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-10-17",
+    "tenure_months": 45,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94103"
+    }
+  },
+  {
+    "customer_id": "CUST-1052",
+    "name": "Callum Wright",
+    "account_status": "active",
+    "plan_name": "Senior Saver",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643852",
+      "model": "iPhone SE",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 8.75,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-09-24",
+    "tenure_months": 70,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "10001"
+    }
+  },
+  {
+    "customer_id": "CUST-1053",
+    "name": "Mei Lin",
+    "account_status": "active",
+    "plan_name": "Premium Unlimited",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643853",
+      "model": "Google Pixel 8",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 80.2,
+      "payment_method": "credit_card",
+      "last_payment_status": "failed"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-05-27",
+    "tenure_months": 38,
+    "recent_tickets": [
+      {
+        "date": "2026-08-18",
+        "issue": "payment failed",
+        "resolved": false,
+        "description": "Card was declined again this morning, same error as before."
+      }
+    ],
+    "service_area": {
+      "zip_code": "60614"
+    }
+  },
+  {
+    "customer_id": "CUST-1054",
+    "name": "Tunde Bakare",
+    "account_status": "active",
+    "plan_name": "Student Plan",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643854",
+      "model": "Motorola Edge",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 0.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "not_activated",
+    "contract_end_date": "2027-01-30",
+    "tenure_months": 1,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "73301"
+    }
+  },
+  {
+    "customer_id": "CUST-1055",
+    "name": "Anastasia Volkova",
+    "account_status": "active",
+    "plan_name": "Family Share 20GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643855",
+      "model": "iPhone 13 mini",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 24.9,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-12-09",
+    "tenure_months": 10,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "94016"
+    }
+  },
+  {
+    "customer_id": "CUST-1056",
+    "name": "Julian Bauer",
+    "account_status": "active",
+    "plan_name": "Unlimited Plus",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643856",
+      "model": "Samsung Galaxy S24",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 42.5,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-03-31",
+    "tenure_months": 26,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "30301"
+    }
+  },
+  {
+    "customer_id": "CUST-1057",
+    "name": "Consuela Ramirez",
+    "account_status": "active",
+    "plan_name": "Business Pro",
+    "plan_status": "pending",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643857",
+      "model": "iPhone 15 Pro",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 99.9,
+      "payment_method": "credit_card",
+      "last_payment_status": "pending"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2027-07-13",
+    "tenure_months": 53,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "78701"
+    }
+  },
+  {
+    "customer_id": "CUST-1058",
+    "name": "Bj\u00f6rn Karlsson",
+    "account_status": "active",
+    "plan_name": "Basic 5GB",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643858",
+      "model": "iPhone 14",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 5.0,
+      "payment_method": "prepaid",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-11-27",
+    "tenure_months": 4,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "98101"
+    }
+  },
+  {
+    "customer_id": "CUST-1059",
+    "name": "Amina Yusuf",
+    "account_status": "active",
+    "plan_name": "Smart 10GB",
+    "plan_status": "active",
+    "roaming_flag": true,
+    "device": {
+      "imei": "356938035643859",
+      "model": "Samsung Galaxy A54",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 17.3,
+      "payment_method": "credit_card",
+      "last_payment_status": "success"
+    },
+    "sim_status": "blocked",
+    "contract_end_date": "2027-02-21",
+    "tenure_months": 23,
+    "recent_tickets": [
+      {
+        "date": "2026-08-25",
+        "issue": "sim blocked",
+        "resolved": false,
+        "description": "Customer thinks it might be working now but hasn't tested it yet."
+      }
+    ],
+    "service_area": {
+      "zip_code": "20001"
+    }
+  },
+  {
+    "customer_id": "CUST-1060",
+    "name": "Nikolai Sorokin",
+    "account_status": "active",
+    "plan_name": "Unlimited Data",
+    "plan_status": "active",
+    "roaming_flag": false,
+    "device": {
+      "imei": "356938035643860",
+      "model": "OnePlus 12",
+      "device_roaming_compatible": true
+    },
+    "billing": {
+      "current_balance": 60.0,
+      "payment_method": "bank_transfer",
+      "last_payment_status": "success"
+    },
+    "sim_status": "active",
+    "contract_end_date": "2026-10-24",
+    "tenure_months": 41,
+    "recent_tickets": [],
+    "service_area": {
+      "zip_code": "02108"
+    }
+  }
+]

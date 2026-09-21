@@ -1,0 +1,39 @@
+[
+  {"condition_id": "COND-001", "field": "roaming_flag", "operator": "==", "value": false, "description": "Roaming is disabled on the account", "verification_api": "GET /account/{customer_id}/roaming-status"},
+  {"condition_id": "COND-002", "field": "roaming_flag", "operator": "==", "value": true, "description": "Roaming is enabled on the account", "verification_api": "GET /account/{customer_id}/roaming-status"},
+  {"condition_id": "COND-003", "field": "plan_status", "operator": "==", "value": "inactive", "description": "Customer's plan is inactive", "verification_api": "GET /account/{customer_id}/plan-status"},
+  {"condition_id": "COND-004", "field": "plan_status", "operator": "==", "value": "pending", "description": "Customer's plan is pending activation", "verification_api": "GET /account/{customer_id}/plan-status"},
+  {"condition_id": "COND-005", "field": "plan_status", "operator": "==", "value": "active", "description": "Customer's plan is active", "verification_api": "GET /account/{customer_id}/plan-status"},
+  {"condition_id": "COND-006", "field": "device.device_roaming_compatible", "operator": "==", "value": false, "description": "Device does not support roaming bands in the destination country", "verification_api": "GET /device/{imei}/roaming-compatibility"},
+  {"condition_id": "COND-007", "field": "device.device_roaming_compatible", "operator": "==", "value": true, "description": "Device supports roaming bands", "verification_api": "GET /device/{imei}/roaming-compatibility"},
+  {"condition_id": "COND-008", "field": "billing.last_payment_status", "operator": "==", "value": "failed", "description": "Last payment attempt failed", "verification_api": "GET /account/{customer_id}/payment-status"},
+  {"condition_id": "COND-009", "field": "billing.last_payment_status", "operator": "==", "value": "pending", "description": "Last payment is still pending", "verification_api": "GET /account/{customer_id}/payment-status"},
+  {"condition_id": "COND-010", "field": "billing.last_payment_status", "operator": "==", "value": "success", "description": "Last payment succeeded", "verification_api": "GET /account/{customer_id}/payment-status"},
+  {"condition_id": "COND-011", "field": "sim_status", "operator": "==", "value": "blocked", "description": "SIM card is blocked", "verification_api": "GET /sim/{customer_id}/status"},
+  {"condition_id": "COND-012", "field": "sim_status", "operator": "==", "value": "not_activated", "description": "SIM card has not been activated", "verification_api": "GET /sim/{customer_id}/status"},
+  {"condition_id": "COND-013", "field": "sim_status", "operator": "==", "value": "active", "description": "SIM card is active", "verification_api": "GET /sim/{customer_id}/status"},
+  {"condition_id": "COND-014", "field": "account_status", "operator": "==", "value": "suspended", "description": "Account is suspended", "verification_api": "GET /account/{customer_id}/status"},
+  {"condition_id": "COND-015", "field": "account_status", "operator": "==", "value": "closed", "description": "Account is closed", "verification_api": "GET /account/{customer_id}/status"},
+  {"condition_id": "COND-016", "field": "billing.current_balance", "operator": ">", "value": 50, "description": "Outstanding balance exceeds $50", "verification_api": "GET /account/{customer_id}/balance"},
+  {"condition_id": "COND-017", "field": "billing.current_balance", "operator": "==", "value": 0, "description": "Account balance is zero", "verification_api": "GET /account/{customer_id}/balance"},
+  {"condition_id": "COND-018", "field": "tenure_months", "operator": "<", "value": 3, "description": "Customer tenure is under 3 months (new customer)", "verification_api": "GET /account/{customer_id}/tenure"},
+  {"condition_id": "COND-019", "field": "tenure_months", "operator": ">=", "value": 24, "description": "Customer tenure is 24 months or more (loyalty eligible)", "verification_api": "GET /account/{customer_id}/tenure"},
+  {"condition_id": "COND-020", "field": "recent_tickets", "operator": ">", "value": 0, "description": "Customer has at least one unresolved ticket on file", "verification_api": "GET /account/{customer_id}/tickets"},
+  {"condition_id": "COND-021", "field": "billing.payment_method", "operator": "==", "value": "prepaid", "description": "Payment method on file is prepaid", "verification_api": "GET /account/{customer_id}/payment-method"},
+  {"condition_id": "COND-022", "field": "billing.payment_method", "operator": "==", "value": "bank_transfer", "description": "Payment method on file is bank transfer", "verification_api": "GET /account/{customer_id}/payment-method"},
+  {"condition_id": "COND-023", "description": "Active network outage confirmed in the customer's service area", "operator": "==", "value": true, "verification_chain": [
+    {"call": "GET /customer/{customer_id}", "source": "crm", "reads": "service_area.zip_code", "provides": "zip_code"},
+    {"call": "GET /network/status?zip={zip_code}", "source": "network_status", "param_from": "zip_code", "reads": "outage_active", "provides": "outage_active"}
+  ]},
+  {"condition_id": "COND-024", "kind": "ticket_text", "description": "Most recent ticket's description indicates the customer's issue is still ongoing", "interpretation_question": "Does this ticket description indicate the customer's issue is still happening / unresolved? Answer based only on the free-text description, not assumptions."},
+  {"condition_id": "COND-025", "description": "Customer still owes an outstanding device installment balance", "operator": ">", "value": 0, "verification_chain": [
+    {"call": "GET /customer/{customer_id}", "source": "crm", "reads": "device.imei", "provides": "imei"},
+    {"call": "GET /device/{imei}/financing", "source": "device_financing", "param_from": "imei", "reads": "remaining_balance", "provides": "remaining_balance"}
+  ]},
+  {"condition_id": "COND-026", "description": "Payment gateway flags this customer's account as high fraud risk", "operator": "==", "value": true, "verification_chain": [
+    {"call": "GET /customer/{customer_id}", "source": "crm", "reads": "customer_id", "provides": "customer_id"},
+    {"call": "GET /fraud-gateway/status?customer_id={customer_id}", "source": "fraud_gateway", "param_from": "customer_id", "reads": "risk_flag", "provides": "risk_flag"}
+  ]},
+  {"condition_id": "COND-027", "kind": "ticket_text", "description": "Ticket description suggests unauthorized or suspicious account activity", "interpretation_question": "Does this ticket description suggest the customer is reporting unauthorized access, a hacked account, or other suspicious activity (not just a routine complaint)? Answer based only on the free-text description, not assumptions."},
+  {"condition_id": "COND-028", "kind": "ticket_text", "description": "Ticket description indicates the customer is specifically requesting a refund or credit", "interpretation_question": "Does this ticket description indicate the customer is specifically asking for a refund or billing credit, as opposed to just describing a problem? Answer based only on the free-text description, not assumptions."}
+]
