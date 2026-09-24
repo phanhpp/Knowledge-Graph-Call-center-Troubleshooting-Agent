@@ -207,7 +207,7 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Test
 ## Status
 
 - **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, the open-ended path, and follow-up questions in a saved conversation.
-- **`classify_intent` is a placeholder.** It works, but it is meant to be replaced. It shows Claude the procedure list and the conversation, and it can misroute a policy question that sounds like a procedure (for example early termination fees).
+- **`classify_intent` is a placeholder.** It works, but it is meant to be replaced. It shows Claude the procedure list and the conversation, and it can misroute a policy question that sounds like a procedure. **TODO:** once it is replaced, test it properly. Known case: "What are the early termination fees if I cancel my contract?" should go to the knowledge base, but the placeholder sends it to the "Contract cancellation request" procedure. `tests/e2e/open_ended/` has that test marked `xfail`; remove the marker and check it passes.
 - **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but not yet run against a real workspace. That needs your Slack tokens (see `slack_bot/slack_setup.md`).
 - **Not built:** Microsoft Teams (it needs a public HTTPS endpoint and an Azure Bot registration). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
 

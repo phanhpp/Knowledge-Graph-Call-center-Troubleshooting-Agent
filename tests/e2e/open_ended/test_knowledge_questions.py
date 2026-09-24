@@ -31,3 +31,20 @@ def test_every_citation_is_a_real_article_or_rule(ask):
     assert reply_of(result).citations
     for citation in reply_of(result).citations:
         assert citation in ARTICLE_IDS | RULE_IDS, f"unknown citation {citation!r}"
+
+
+@pytest.mark.xfail(
+    reason=(
+        "TODO: classify_intent is a placeholder, and it sends this question to the 'Contract cancellation "
+        "request' procedure. Remove this marker once your own classifier routes it to the knowledge base."
+    ),
+    strict=False,
+)
+def test_a_fee_question_that_sounds_like_a_procedure_goes_to_the_knowledge_base(ask):
+    """'What are the early termination fees...' asks for information, so it belongs to the knowledge
+    base, even though a 'Contract cancellation request' procedure exists."""
+    result = ask("What are the early termination fees if I cancel my contract?", "CUST-1001")
+
+    assert result["intent"] == "open_ended"
+    assert "KB-005" in reply_of(result).citations
+    assert {"R005", "R013"} & set(reply_of(result).citations)

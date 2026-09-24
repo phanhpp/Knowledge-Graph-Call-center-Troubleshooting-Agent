@@ -127,6 +127,10 @@ def classify_intent(state: SuperAgentState) -> dict:
     This version shows Claude the procedure list (it must pick a procedure id from a closed set) and
     the whole conversation (each conversation is one case, so it stays short). If it picks 'explain'
     but there is no earlier message, that is corrected to open_ended here, in code.
+
+    TODO: once this is replaced, test it properly. Known case: "What are the early termination fees
+    if I cancel my contract?" should be open_ended, but this version sends it to the "Contract
+    cancellation request" procedure (tests/e2e/open_ended, marked xfail until then).
     """
     # No explicit temperature — claude-sonnet-5 rejects it ("temperature is
     # deprecated for this model"), unlike older Claude models.

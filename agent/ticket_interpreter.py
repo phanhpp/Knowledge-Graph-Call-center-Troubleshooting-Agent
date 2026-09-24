@@ -2,8 +2,9 @@
 
 Structured CRM fields (roaming_flag, plan_status, ...) are always answerable
 by a deterministic field/operator/value check (mock_crm/condition_evaluator.py)
-— no amount of chaining changes that, see its module docstring. This module
-exists for the one condition type that isn't: interpreting a free-text
+— no amount of chaining changes that, see its module docstring. 
+
+This module exists for the one condition type that isn't: interpreting a free-text
 ticket description, which a plain `field == value` check cannot do.
 
 This is also the one place "Replanning" (Vodafone's LLM Compiler fallback
