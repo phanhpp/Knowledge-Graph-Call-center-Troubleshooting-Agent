@@ -24,7 +24,7 @@ def test_unknown_customer_is_not_reported_as_a_missing_procedure(ask):
 
 
 def test_unknown_customer_stops_before_the_intent_is_classified(ask):
-    """`intent` is never set, which shows classify_intent (a paid Claude call) was skipped."""
+    """`intent` is never set, which shows classify_intent (a paid Jev call) was skipped."""
     result = ask("Customer cannot activate roaming", "CUST-9999")
     assert "intent" not in result
 

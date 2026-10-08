@@ -9,7 +9,12 @@ import config  # noqa: F401  (importing it loads .env, so the keys below are vis
 
 requires_anthropic_key = pytest.mark.skipif(
     not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="needs a live Claude call (classify_intent)",
+    reason="needs a live Claude call",
+)
+
+requires_typesafe_key = pytest.mark.skipif(
+    not os.environ.get("TYPESAFE_API_KEY"),
+    reason="needs a live Jev call (classify_intent, match_procedure)",
 )
 
 requires_openai_key = pytest.mark.skipif(

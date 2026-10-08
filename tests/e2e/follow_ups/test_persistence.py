@@ -1,5 +1,5 @@
 """End-to-end: a conversation saved on disk survives a restart. Two separate graphs (two
-"processes") share one SQLite file. Needs Neo4j and ANTHROPIC_API_KEY."""
+"processes") share one SQLite file. Needs Neo4j, ANTHROPIC_API_KEY and TYPESAFE_API_KEY."""
 
 import sqlite3
 
@@ -9,9 +9,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from agent.supervisor import build_supervisor_graph
 from agent.state import reply_of
 from tests.e2e.conversation import Conversation
-from tests.e2e.markers import requires_anthropic_key
+from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key
 
-pytestmark = [pytest.mark.e2e, requires_anthropic_key]
+pytestmark = [pytest.mark.e2e, requires_anthropic_key, requires_typesafe_key]
 
 
 def graph_on(path):

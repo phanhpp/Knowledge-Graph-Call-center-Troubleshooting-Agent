@@ -50,20 +50,31 @@ def test_immediate_resolution_on_step_1_true_branch():
 
 
 def test_loops_to_terminal_true_branch():
-    """CUST-1001: roaming on, plan active, device compatible -> falls
-    through all three conditions to step 3's true branch."""
-    result = run("PROC-001", "CUST-1001")
+    """CUST-1005: roaming on, plan active, device NOT compatible -> step 3
+    finds the cause, so its true branch gives the device action."""
+    result = run("PROC-001", "CUST-1005")
     assert steps(result) == [1, 2, 3]
-    assert reply_of(result).citations == ["ACT-019"]
+    assert reply_of(result).citations == ["ACT-027"]
 
 
 def test_loops_to_terminal_false_branch_with_rule_citation():
-    """CUST-1005: roaming on, plan active, device NOT compatible -> falls
-    through to step 3's false (catch-all) branch, which cites its
-    governing Rule."""
-    result = run("PROC-001", "CUST-1005")
+    """CUST-1001: roaming on, plan active, device compatible -> no check
+    finds the cause, so step 3's false (catch-all) branch escalates, citing
+    its governing Rule."""
+    result = run("PROC-001", "CUST-1001")
     assert steps(result) == [1, 2, 3]
     assert reply_of(result).citations == ["ACT-015", "R012"]
+
+
+def test_reply_gives_the_action_then_why_then_each_step_checked():
+    """The reply is not just the action: it says why the walk stopped and what each step found."""
+    lines = reply_of(run("PROC-001", "CUST-1001")).text.splitlines()
+
+    assert lines[0] == "Escalate to Tier 2 - unresolved by standard checks"
+    assert lines[2].startswith("Why: none of the 3 checks found the cause")
+    assert lines[3] == 'Checked (PROC-001 "Customer cannot activate roaming"):'
+    assert lines[4] == "1. Roaming is disabled on the account: no (roaming_flag = True)"
+    assert len(lines) == 7
 
 
 # --- chain_check: PROC-016 (zip -> outage), PROC-013 (imei -> financing),
@@ -107,29 +118,46 @@ def test_fraud_gateway_chain_true_resolves_immediately():
 
 
 def test_trace_records_procedure_steps_results_evidence_and_the_action():
-    """CUST-1005 says NO at all three steps, so the trace has three entries: each names the
-    procedure, the step and its NO result with the value it used, and the last also names the
-    action given (ACT-015)."""
-    trace = run("PROC-001", "CUST-1005")["step_trace"]
+    """CUST-1001 says NO at all three steps, so the trace has three entries: each names the
+    procedure, the step and its NO result with the value it used."""
+    trace = run("PROC-001", "CUST-1001")["step_trace"]
 
     assert [e["procedure_id"] for e in trace] == ["PROC-001"] * 3
-    assert [e["condition_id"] for e in trace] == ["COND-001", "COND-003", "COND-007"]
+    assert [e["condition_id"] for e in trace] == ["COND-001", "COND-003", "COND-006"]
     assert [e["result"] for e in trace] == [False, False, False]
     assert trace[0]["evidence"] == "roaming_flag = True"
     assert trace[1]["evidence"] == "plan_status = active"
-    assert trace[2]["evidence"] == "device.device_roaming_compatible = False"
-    assert trace[2]["action_id"] == "ACT-015"
-    assert "action_id" not in trace[0] and "action_id" not in trace[1]
+    assert trace[2]["evidence"] == "device.device_roaming_compatible = True"
 
 
-def test_trace_records_a_yes_result_and_its_action():
-    """CUST-1002 says YES at step 1: one entry, result True, with the action given (ACT-001)."""
+def test_trace_records_a_yes_result():
+    """CUST-1002 says YES at step 1: one entry, result True."""
     trace = run("PROC-001", "CUST-1002")["step_trace"]
 
     assert len(trace) == 1
     assert trace[0]["result"] is True
     assert trace[0]["evidence"] == "roaming_flag = False"
-    assert trace[0]["action_id"] == "ACT-001"
+
+
+# --- troubleshooting_results: the concise result saved for follow-ups ---
+
+
+def test_result_is_saved_for_the_customer_concisely():
+    """The walk saves one entry, keyed by customer: procedure, action, rules, one line per step."""
+    results = run("PROC-001", "CUST-1001")["troubleshooting_results"]
+
+    assert results == {
+        "CUST-1001": {
+            "procedure_id": "PROC-001",
+            "action_id": "ACT-015",
+            "rule_ids": ["R012"],
+            "checks": [
+                "Roaming is disabled on the account: no (roaming_flag = True)",
+                "Customer's plan is inactive: no (plan_status = active)",
+                "Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)",
+            ],
+        }
+    }
 
 
 def test_chain_condition_trace_has_no_single_evidence():
@@ -140,28 +168,30 @@ def test_chain_condition_trace_has_no_single_evidence():
     assert trace[0]["evidence"] is None
 
 
-def test_a_new_walk_does_not_inherit_the_previous_trace():
-    """The Supervisor keeps step_trace between turns, so it arrives holding the last walk's entries.
-    The new walk must start empty."""
-    stale = [{"procedure_id": "PROC-999", "step_id": 9, "stale": True}]
-    crm = get_customer("CUST-1002")
+def test_a_new_walk_replaces_only_its_own_customers_result():
+    """Results arrive holding other customers' entries (one conversation, several customers). A walk
+    replaces its own customer's entry and leaves the others alone."""
+    earlier = {"CUST-1002": {"procedure_id": "PROC-999"}, "CUST-1005": {"procedure_id": "PROC-014"}}
 
-    result = GRAPH.invoke({"matched_procedure_id": "PROC-001", "crm_context": crm, "step_trace": stale})
+    result = GRAPH.invoke(
+        {"matched_procedure_id": "PROC-001", "crm_context": get_customer("CUST-1002"), "troubleshooting_results": earlier}
+    )
 
-    assert not any(e.get("stale") for e in result["step_trace"])
-    assert steps(result) == [1]
+    assert result["troubleshooting_results"]["CUST-1002"]["action_id"] == "ACT-001"
+    assert result["troubleshooting_results"]["CUST-1005"] == {"procedure_id": "PROC-014"}
 
 
-def test_a_failed_walk_clears_the_previous_trace():
-    """A walk that finds no such procedure must not leave the previous walk's trace behind, or a
-    'why?' afterwards would explain the wrong answer."""
-    stale = [{"procedure_id": "PROC-001", "step_id": 1}]
-    crm = get_customer("CUST-1002")
+def test_a_failed_walk_clears_that_customers_result():
+    """A walk that finds no such procedure leaves None for its customer, so a 'why?' afterwards can't
+    explain an older answer as if it were this one."""
+    earlier = {"CUST-1002": {"procedure_id": "PROC-001"}}
 
-    result = GRAPH.invoke({"matched_procedure_id": "PROC-999", "crm_context": crm, "step_trace": stale})
+    result = GRAPH.invoke(
+        {"matched_procedure_id": "PROC-999", "crm_context": get_customer("CUST-1002"), "troubleshooting_results": earlier}
+    )
 
     assert result["error"]
-    assert result["step_trace"] == []
+    assert result["troubleshooting_results"] == {"CUST-1002": None}
 
 
 # --- ticket_text: PROC-017/019/004 — genuinely calls an LLM ---

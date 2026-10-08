@@ -5,44 +5,57 @@ Flow of one turn:
     START -> inject_crm --- unknown customer_id ---> handle_crm_error -> END
                 |
                 v
-          classify_intent (Claude; reads the messages)
+           check_neo4j ---- Neo4j not reachable: reply "offline" ---> END
                 |
-      +---------+--------------+------------------+
-      v                        v                  v
-  procedural_executor    graph_rag_chain    explain_answer      chosen by route(), not by the model
-      |                        |                  |
-      +------------------------+------------------+
-                               v
-                              END
+                v
+          classify_intent (Jev; which path, from the messages)
+                |
+      +---------+------------------------+------------------+
+      v                                  v                  v
+  match_procedure (Jev; which one)  graph_rag_chain    explain_answer      chosen by route(), not by the model
+      |              |                   ^                  |
+      | matched      +---- no match -----+                  |
+      v                                  |                  |
+  procedural_executor                    |                  |
+      |                                  |                  |
+      +----------------------------------+------------------+
+                                         v
+                                        END
 
 Each path returns its reply as an AIMessage (see agent/state.py reply()), which LangGraph adds to
 `messages`. That is the only place the answer lives; its citations are on the message.
 
 With a checkpointer and a thread_id, the state is saved between turns (see agent/state.py), which is
 what makes a follow-up work: the customer need not be repeated, Claude sees the earlier messages, and
-`explain_answer` can read the last walk's `step_trace`. Without a checkpointer every call stands alone.
+`explain_answer` can read the current customer's last result in `troubleshooting_results`. One
+conversation can cover several customers; `customer_id` is the one currently being discussed.
+Without a checkpointer every call stands alone.
 
-Claude is called in four places: classify_intent, explain_answer, agent/ticket_interpreter.py (inside
-the walk, only for ticket_text conditions) and agent/graph_rag_chain.py (to write the answer).
-Everything else is plain code.
+Jev (TypeSafe, a classifier: typed answers with probabilities, no generated text) is called in
+classify_intent and match_procedure; it needs TYPESAFE_API_KEY. Claude is called in three places:
+explain_answer, agent/ticket_interpreter.py (inside the walk, only for ticket_text conditions) and
+agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 """
 
+import logging
 from functools import lru_cache
 from typing import Literal, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage
+from langchain_typesafe import Choice, Noul, NoulCriteria, TypeSafeClassifier
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from langgraph.types import Command
 
 from agent.graph_rag_chain import graph_rag_chain
-from agent.procedural_executor import build_procedural_executor_graph
+from agent.procedural_executor import build_procedural_executor_graph, procedure_name
 from agent.state import SuperAgentState, reply
-from config import get_driver
+from config import get_driver, neo4j_unavailable_reason
 from etl.io_utils import load_json
 from mock_crm.crm_store import CustomerNotFoundError, get_customer
 
-_CLASSIFIER_MODEL = "claude-sonnet-5"
+logger = logging.getLogger(__name__)
+
 _EXPLAIN_MODEL = "claude-sonnet-5"
 
 NOTHING_TO_EXPLAIN = "There is nothing earlier in this conversation to explain yet. Ask your question first."
@@ -54,58 +67,57 @@ RETURN a.text AS text, collect({id: r.ruleId, description: r.description, detail
 """
 
 
-class IntentClassification(BaseModel):
-    """The structured answer classify_intent asks Claude for."""
+# Thresholds for Jev's answers. Starting values: tune them on a labelled set of messages. Kept
+# cautious on purpose, since walking the wrong procedure does more harm than a KB answer.
+_MIN_PATH_CONFIDENCE = 0.5  # below this, a troubleshooting pick becomes open_ended
+_MIN_OWN_SITUATION = 0.5  # below this probability, a troubleshooting pick becomes open_ended
+_MIN_PROCEDURE_CONFIDENCE = 0.5  # below this, no procedure is walked
 
-    intent: Literal["troubleshooting", "open_ended", "explain"] = Field(
-        description=(
-            "'troubleshooting' if the message describes a problem that matches one of the known procedures; "
-            "'explain' if it asks about the PREVIOUS answer in this conversation (why it was given, what a "
-            "cited rule or step means); otherwise 'open_ended'"
-        )
-    )
-    matched_procedure_id: Optional[str] = Field(
-        default=None, description="the matching procedure_id when intent is 'troubleshooting', else null"
-    )
+_NO_PROCEDURE = "none"
+
+
+@lru_cache(maxsize=1)
+def _classifier() -> TypeSafeClassifier:
+    """The Jev client, made once and reused.
+
+    lru_cache on a no-argument function means: run it on the first call, then return the same result.
+    Lazy, because TypeSafeClassifier() raises without TYPESAFE_API_KEY, so building it at import would
+    break importing this module (unit tests, Slack bot). Reused, because it holds an HTTP connection pool.
+    """
+    return TypeSafeClassifier()
 
 
 @lru_cache(maxsize=1)
 def _procedures() -> list[dict]:
-    """procedures.json, loaded once."""
+    """procedures.json, loaded once (lru_cache: read from disk on the first call, then reused)."""
     return load_json("procedures.json")
-
-
-def _procedure_catalog() -> str:
-    """Format every procedure's id/name/category, so classify_intent can pick one."""
-    return "\n".join(f"- {p['procedure_id']}: {p['procedure_name']} ({p['category']})" for p in _procedures())
-
-
-def _procedure_name(procedure_id: str) -> str:
-    """The name of a procedure, or 'unknown' if the id is not in procedures.json."""
-    return next((p["procedure_name"] for p in _procedures() if p["procedure_id"] == procedure_id), "unknown")
 
 
 def inject_crm(state: SuperAgentState) -> dict:
     """Start a turn: reset what belongs to the previous turn, then look up the customer's CRM record.
 
     A conversation is saved between turns, so the previous turn's `error` is cleared here. Otherwise
-    a stale error would send a good request to handle_crm_error. `step_trace` is deliberately not
-    cleared: it is what a follow-up explains, and the next walk replaces it.
+    a stale error would send a good request to handle_crm_error. `troubleshooting_results` is
+    deliberately not cleared: it is what a follow-up explains, and a customer's next walk replaces
+    only their own entry.
 
     An unknown customer_id does not raise: it sets `error`, and route_after_crm sends the request to
     handle_crm_error.
     """
     fresh_turn = {"error": None}
+    messages = state.get("messages") or []
+    logger.info("New turn for %s: %r", state["customer_id"], messages[-1].content if messages else "")
     try:
         crm_context = get_customer(state["customer_id"])
     except CustomerNotFoundError:
+        logger.info("Turn stopped: no CRM record for %s", state["customer_id"])
         return {**fresh_turn, "error": f"No CRM record found for customer_id '{state['customer_id']}'"}
     return {**fresh_turn, "crm_context": crm_context}
 
 
-def route_after_crm(state: SuperAgentState) -> Literal["classify_intent", "handle_crm_error"]:
-    """Stop early if inject_crm couldn't find the customer, before any Claude call is made."""
-    return "handle_crm_error" if state.get("error") else "classify_intent"
+def route_after_crm(state: SuperAgentState) -> Literal["check_neo4j", "handle_crm_error"]:
+    """Stop early if inject_crm couldn't find the customer, before any paid call is made."""
+    return "handle_crm_error" if state.get("error") else "check_neo4j"
 
 
 def handle_crm_error(state: SuperAgentState) -> dict:
@@ -116,96 +128,211 @@ def handle_crm_error(state: SuperAgentState) -> dict:
     return reply(f"I couldn't find a customer with ID '{state['customer_id']}'. Check the customer ID and try again.")
 
 
-def classify_intent(state: SuperAgentState) -> dict:
-    """PLACEHOLDER: replace this with your own classification. Ask Claude which path a message takes.
+NEO4J_DOWN = (
+    "The knowledge graph is offline, so I can't answer right now. "
+    "Ask whoever runs the agent to start Neo4j, then try again."
+)
 
-    Contract (keep this, whatever the implementation):
-      reads   state["messages"] (the conversation; the last one is the new message) and customer_id
-      returns {"intent": "troubleshooting" | "open_ended" | "explain",
-               "matched_procedure_id": the procedure to walk, or None unless troubleshooting}
 
-    This version shows Claude the procedure list (it must pick a procedure id from a closed set) and
-    the whole conversation (each conversation is one case, so it stays short). If it picks 'explain'
-    but there is no earlier message, that is corrected to open_ended here, in code.
+def check_neo4j(state: SuperAgentState) -> Command[Literal["classify_intent", "__end__"]]:
+    """Stop the turn here if Neo4j is not reachable; otherwise go on to classify_intent.
 
-    TODO: once this is replaced, test it properly. Known case: "What are the early termination fees
-    if I cancel my contract?" should be open_ended, but this version sends it to the "Contract
-    cancellation request" procedure (tests/e2e/open_ended, marked xfail until then).
+    Every path needs Neo4j (the procedure walk, the knowledge-base search, explain), so without it
+    the turn would only fail later, after paying for the Jev calls, with a generic error. If Neo4j
+    is down, this replies NEO4J_DOWN, sets `error` to the technical reason (also logged for whoever
+    runs the agent) and ends the turn. A Command does both in one node: the update, and where to go.
     """
-    # No explicit temperature — claude-sonnet-5 rejects it ("temperature is
-    # deprecated for this model"), unlike older Claude models.
-    llm = ChatAnthropic(model=_CLASSIFIER_MODEL).with_structured_output(IntentClassification)
-    system = SystemMessage(
-        "You are routing a telecom support consultant's latest message to a known troubleshooting "
-        "procedure, to an explanation of the previous answer, or to an open-ended knowledge lookup.\n\n"
-        f"Known procedures:\n{_procedure_catalog()}"
-    )
-    result: IntentClassification = llm.invoke([system, *state["messages"]])
+    reason = neo4j_unavailable_reason()
+    if reason:
+        logger.error("Turn stopped: %s", reason)
+        return Command(update={**reply(NEO4J_DOWN), "error": reason}, goto=END)
+    return Command(goto="classify_intent")
 
-    intent = result.intent
+
+def classify_intent(state: SuperAgentState) -> dict:
+    """Decide which path the consultant's latest message takes, by asking Jev two questions at once.
+
+    Both questions are judged on what the consultant wants done, not on the topic: most procedures
+    have a KB article on the same topic (cancellation, SIM replacement, outage credit). The procedure
+    list is deliberately not shown here; seeing "Contract cancellation request" is what made the old
+    classifier send a fee question to that procedure. match_procedure picks the procedure later.
+
+    Returns {"intent": ..., "matched_procedure_id": None}. The id is cleared every turn (the state is
+    saved between turns), and only match_procedure sets it.
+    """
+    response = _classifier().invoke({
+        "state": state["messages"],  # the whole conversation; the last message is the new one
+        "questions": {
+            # Question 1, a Choice: pick one label. Jev returns the label and a confidence (0 to 1).
+            "path": Choice(
+                instructions=(
+                    "A call-centre consultant is talking to an assistant while handling a customer. "
+                    "Classify the consultant's LATEST message by what they want done, not by its topic: "
+                    "most topics (cancellation, roaming, SIM cards, refunds, outages) come up both as a "
+                    "customer's problem and as a general question."
+                ),
+                criteria={
+                    "troubleshooting": (
+                        "The consultant is working a case for this customer right now: the customer has "
+                        "a problem (something not working, an unexpected charge, a suspension, a lockout) "
+                        "or a request the consultant must act on (cancel, replace a SIM, change plan, get "
+                        "a credit). The right answer depends on this customer's account."
+                    ),
+                    "open_ended": (
+                        "The consultant wants general information: fees, prices, rates, rules, timelines, "
+                        "eligibility, or how a process works. The answer would be the same for any "
+                        "customer, even when the topic matches a common customer problem."
+                    ),
+                    "explain": (
+                        "The consultant asks about the assistant's previous answer in this conversation: "
+                        "why it was given, what a step, action or cited rule means, or where it came from."
+                    ),
+                },
+            ),
+            # Question 2, a Noul: a yes/no question. Jev returns the probability of yes (0 to 1).
+            # It asks the one thing the fee bug hinges on, on its own, as a second check on
+            # "troubleshooting".
+            "own_situation": Noul(
+                instructions=(
+                    "Is the consultant's latest message about this particular customer's own situation, "
+                    "so that the right answer depends on this customer's account?"
+                ),
+                criteria=NoulCriteria(
+                    true="The customer has a problem or request of their own that the consultant is handling now.",
+                    false="A general question whose answer is the same for every customer, such as a fee, rate or policy.",
+                ),
+            ),
+        },
+    })
+    path = response.choices["path"]  # e.g. path.choice = "troubleshooting", path.confidence = 0.92
+    own_situation = response.nouls["own_situation"].noul  # e.g. 0.87
+
+    intent = path.choice
+    # Troubleshooting must pass both checks; when unsure, answer from the knowledge base instead.
+    if intent == "troubleshooting" and (path.confidence < _MIN_PATH_CONFIDENCE or own_situation < _MIN_OWN_SITUATION):
+        intent = "open_ended"
+    # There is nothing to explain on the first message.
     if intent == "explain" and len(state["messages"]) < 2:
         intent = "open_ended"
-    return {
-        "intent": intent,
-        "matched_procedure_id": result.matched_procedure_id if intent == "troubleshooting" else None,
-    }
+    logger.info("Intent: %s", intent)
+    logger.debug("  Jev: path=%s (confidence %.2f), own_situation=%.2f", path.choice, path.confidence, own_situation)
+    return {"intent": intent, "matched_procedure_id": None}
 
 
-def route(state: SuperAgentState) -> Literal["procedural_executor", "explain_answer", "graph_rag_chain"]:
+def match_procedure(state: SuperAgentState) -> dict:
+    """Pick the procedure to walk, for a message classify_intent called troubleshooting.
+
+    "none", or a pick below the confidence threshold, leaves matched_procedure_id as None, and
+    route_after_match sends the message to the knowledge base instead of walking the nearest
+    procedure.
+
+    With 20 procedures every one is offered. If the list grows to the hundreds, narrow it first
+    (hybrid search over the procedures) and let Jev choose among the top few.
+    """
+    # One label per procedure, described by its name and when_to_use (procedures.json), e.g.
+    #   "PROC-016": "Reported service outage in customer's area. The customer reports no service ...
+    #                If they are asking for a credit or compensation for an outage, use PROC-017."
+    # when_to_use says how a procedure differs from its neighbours, which the names alone do not.
+    criteria = {p["procedure_id"]: f"{p['procedure_name']}. {p['when_to_use']}" for p in _procedures()}
+    criteria[_NO_PROCEDURE] = "None of these procedures fits the situation described."
+
+    response = _classifier().invoke({
+        "state": state["messages"],
+        "questions": {
+            # A Choice: Jev returns one procedure id (or "none") and a confidence (0 to 1).
+            "procedure": Choice(
+                instructions=(
+                    "A call-centre consultant is handling a customer's problem or request. Which "
+                    "troubleshooting procedure fits the situation described in the conversation? Match "
+                    "the specific symptom or request, not just the topic."
+                ),
+                criteria=criteria,
+            ),
+        },
+    })
+    pick = response.choices["procedure"]  # e.g. pick.choice = "PROC-016", pick.confidence = 0.81
+
+    logger.debug("  Jev: procedure=%s (confidence %.2f)", pick.choice, pick.confidence)
+    if pick.choice == _NO_PROCEDURE or pick.confidence < _MIN_PROCEDURE_CONFIDENCE:
+        logger.info("Procedure: none fits, so the knowledge base answers")
+        return {"matched_procedure_id": None}
+    logger.info("Procedure: %s \"%s\"", pick.choice, procedure_name(pick.choice))
+    return {"matched_procedure_id": pick.choice}
+
+
+def route(state: SuperAgentState) -> Literal["match_procedure", "explain_answer", "graph_rag_chain"]:
     """Deterministic routing off the already-classified intent (not LLM-guessed here)."""
     if state["intent"] == "troubleshooting":
-        return "procedural_executor"
+        return "match_procedure"
     if state["intent"] == "explain":
         return "explain_answer"
     return "graph_rag_chain"
 
 
-def _walk_facts(trace: list[dict]) -> tuple[str, list[str]]:
-    """The last procedure walk as text for Claude, and the IDs it cited (action, then its rules).
+def route_after_match(state: SuperAgentState) -> Literal["procedural_executor", "graph_rag_chain"]:
+    """Walk the matched procedure; with no match, answer from the knowledge base instead."""
+    return "procedural_executor" if state.get("matched_procedure_id") else "graph_rag_chain"
 
-    Reads the steps from `trace` and looks up, in Neo4j, the action given and the rules that limit
-    it. Returns ("", []) when there was no walk.
+
+def _walk_facts(result: Optional[dict]) -> tuple[str, list[str]]:
+    """Turn one customer's last troubleshooting result into facts explain_answer can give Claude, so
+    a follow-up like "why?" is answered from what actually happened, not from Claude's guess.
+
+    `result` is that customer's entry in `troubleshooting_results`, written by the walk's resolve:
+    {"procedure_id", "action_id", "rule_ids", "checks": ["<step>: yes/no (<value>)", ...]}. It holds
+    only IDs for the action and rules, so their wording is looked up in Neo4j here.
+
+    Returns (facts, cited):
+      facts  plain text for Claude's prompt, e.g.
+               Procedure PROC-001 ("Customer cannot activate roaming"). Steps checked, in order:
+               - Roaming is disabled on the account: no (roaming_flag = True)
+               ...
+               Action given: ACT-015 "Escalate to Tier 2 ..."
+               Rules governing it:
+               - R012: ...
+      cited  the IDs the explanation cites: the action, then its rules, e.g. ["ACT-015", "R012"]
+
+    Returns ("", []) when the customer has no result (no walk yet, or their last walk failed).
     """
-    if not trace:
+    if not result:
         return "", []
-    lines = [f"Procedure {trace[0]['procedure_id']} (\"{_procedure_name(trace[0]['procedure_id'])}\"). Steps checked, in order:"]
-    for step in trace:
-        answer = "YES" if step["result"] else "NO"
-        evidence = f" ({step['evidence']})" if step.get("evidence") else ""
-        lines.append(f"- Step {step['step_id']}: \"{step['description']}\" -> {answer}{evidence}")
+    lines = [f"Procedure {result['procedure_id']} (\"{procedure_name(result['procedure_id'])}\"). Steps checked, in order:"]
+    lines += [f"- {check}" for check in result["checks"]]
 
-    action_id = trace[-1].get("action_id")
-    if not action_id:
-        return "\n".join(lines), []
+    action_id = result["action_id"]
     with get_driver().session() as session:
         record = session.run(_ACTION_DETAILS_CYPHER, action_id=action_id).single()
     rules = [r for r in record["rules"] if r["id"]]
     lines.append(f"Action given: {action_id} \"{record['text']}\"")
     if rules:
-        lines.append("Rules that limit it:")
+        lines.append("Rules governing it:")
         lines += [f"- {r['id']}: {r['description']}. {r['detail']}" for r in rules]
     return "\n".join(lines), [action_id, *(r["id"] for r in rules)]
 
 
 def explain_answer(state: SuperAgentState) -> dict:
-    """Answer a follow-up about the previous answer ("why?", "what does R012 say?").
+    """Answer a follow-up about an earlier answer ("why?", "what does R012 say?").
 
-    Claude gets the conversation plus facts gathered in plain code: what the last procedure walk
-    checked (from `step_trace`) and the wording of the action and rules, from Neo4j. It answers from
-    those only, and says so if they do not contain the answer. With no earlier message it returns
+    Claude gets the conversation plus facts gathered in plain code about the CURRENT customer only:
+    their last troubleshooting result (from `troubleshooting_results`) and the wording of its action
+    and rules, from Neo4j. A conversation can cover several customers, so the prompt names the
+    customer and the facts never include another customer's walk. Claude answers from those only,
+    and says so if they do not contain the answer. With no earlier message it returns
     NOTHING_TO_EXPLAIN without calling Claude.
 
-    The reply cites the action and rules behind the last walk.
+    The reply cites the action and rules behind that customer's last walk.
     """
     if len(state["messages"]) < 2:
         return reply(NOTHING_TO_EXPLAIN)
 
-    facts, cited = _walk_facts(state.get("step_trace", []))
+    customer_id = state["customer_id"]
+    facts, cited = _walk_facts(state.get("troubleshooting_results", {}).get(customer_id))
     system = SystemMessage(
-        "You are helping a call-centre consultant. They are asking a follow-up question about your "
-        "previous answer. Answer it from the conversation and the facts below ONLY. If they do not "
-        "contain the answer, say so plainly. Be brief.\n\n"
-        f"Facts about the last procedure walk in this conversation:\n{facts or '(no procedure was run)'}"
+        "You are helping a call-centre consultant. They are asking a follow-up question about an "
+        f"earlier answer for customer {customer_id}. The conversation may also mention other "
+        f"customers; answer only about {customer_id}. Answer from the conversation and the facts "
+        "below ONLY. If they do not contain the answer, say so plainly. Be brief.\n\n"
+        f"Facts about {customer_id}'s last procedure walk:\n{facts or '(no procedure was run for this customer)'}"
     )
     llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"})
     response = llm.invoke([system, *state["messages"]])
@@ -221,7 +348,9 @@ def build_supervisor_graph(checkpointer=None):
     builder = StateGraph(SuperAgentState)
     builder.add_node("inject_crm", inject_crm)
     builder.add_node("handle_crm_error", handle_crm_error)
+    builder.add_node("check_neo4j", check_neo4j)  # routes itself (returns a Command)
     builder.add_node("classify_intent", classify_intent)
+    builder.add_node("match_procedure", match_procedure)
     builder.add_node("procedural_executor", build_procedural_executor_graph())
     builder.add_node("graph_rag_chain", graph_rag_chain)
     builder.add_node("explain_answer", explain_answer)
@@ -230,13 +359,18 @@ def build_supervisor_graph(checkpointer=None):
     builder.add_conditional_edges(
         "inject_crm",
         route_after_crm,
-        ["classify_intent", "handle_crm_error"],
+        ["check_neo4j", "handle_crm_error"],
     )
     builder.add_edge("handle_crm_error", END)
     builder.add_conditional_edges(
         "classify_intent",
         route,
-        ["procedural_executor", "explain_answer", "graph_rag_chain"],
+        ["match_procedure", "explain_answer", "graph_rag_chain"],
+    )
+    builder.add_conditional_edges(
+        "match_procedure",
+        route_after_match,
+        ["procedural_executor", "graph_rag_chain"],
     )
     builder.add_edge("procedural_executor", END)
     builder.add_edge("graph_rag_chain", END)
