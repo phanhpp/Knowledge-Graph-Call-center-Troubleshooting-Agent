@@ -147,7 +147,7 @@ An ID typed wrongly in one file breaks the link silently, so `etl/validate.py` c
 
 1. **Step 1** asks `COND-001` ("Roaming is disabled on the account"). Yes means roaming is disabled: the procedure stops and the consultant gets `ACT-001` ("Enable roaming flag and inform customer of 10-minute activation delay"). No means roaming is already enabled: go to step 2.
 2. **Step 2** asks `COND-003` ("Customer's plan is inactive"). Yes: stop and give `ACT-002`. No: go to step 3.
-3. **Step 3** is the last step. It asks `COND-007` ("Device supports roaming bands"). Yes: stop and give `ACT-019` ("Confirm device is roaming-compatible; no further action needed"). No: there is no next step, so the consultant gets `ACT-015` ("Escalate to Tier 2 - unresolved by standard checks").
+3. **Step 3** is the last step. It asks `COND-006` ("Device does not support roaming bands in the destination country"). Yes: that is the cause, so stop and give `ACT-027` (explain the device can't roam there; advise a compatible device). No: every check passed and nothing explains the problem, so the consultant gets `ACT-015` ("Escalate to Tier 2 - unresolved by standard checks").
 
 Rules and articles sit beside this path. For example, rule `R001` ("Refunds over $50 require supervisor approval") limits action `ACT-016`, and article `KB-001` cites rule `R006`.
 

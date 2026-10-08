@@ -37,7 +37,7 @@ VALID_OPERATORS = {"==", "!=", ">", "<", ">=", "<="}
 REQUIRED_FIELDS = {
     "crm": ["customer_id", "name", "account_status", "plan_name", "plan_status"],
     "action": ["action_id", "text", "category", "is_resolution"],
-    "procedure": ["procedure_id", "procedure_name", "category", "steps"],
+    "procedure": ["procedure_id", "procedure_name", "category", "when_to_use", "steps"],
     "rule": ["rule_id", "description", "applies_to_action_ids", "constraint_type", "detail"],
     "article": ["article_id", "title", "category", "content", "related_rule_ids"],
 }
