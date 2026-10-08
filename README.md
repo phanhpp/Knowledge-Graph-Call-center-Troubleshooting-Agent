@@ -17,9 +17,10 @@ Procedure PROC-001  "Customer cannot activate roaming"
             YES -> Action: "Direct customer to reactivate plan before roaming works"                 STOP
             NO  -> go to Step 3
 
-  Step 3  Condition: "Does the device support roaming bands?"                 (last step)
-            YES -> Action: "Confirm device is roaming-compatible; no further action needed"          STOP
+  Step 3  Condition: "Does the device NOT support the destination's roaming bands?"   (last step)
+            YES -> Action: "Explain that the device does not support the roaming bands ..."          STOP
             NO  -> Action: "Escalate to Tier 2 - unresolved by standard checks"
+                   (every check passed, so nothing explains the problem: escalate, never "no action needed")
                    (only the last step has an action for NO, `action_if_false_id`, so a procedure always ends with an answer)
 ```
 
@@ -27,11 +28,11 @@ Procedure PROC-001  "Customer cannot activate roaming"
 - **YES** stops the procedure and gives that step's action. **NO** moves to the next step. On the last step, NO returns that step's fallback action (`action_if_false_id` in `data/procedures.json`). 
 - **Here the API check is simulated.** The agent compares the customer's record in `mock_crm/` with the condition. Some conditions need two lookups, for example ZIP code first and then the outage in that ZIP.
 - One kind of condition is different. It asks Claude to read the customer's latest ticket instead of checking a field.
-- A **Rule** is a policy limit on an action, such as "Tier 2 escalations require a documented troubleshooting summary". If an action has one, the answer cites it.
+- A **Rule** is a business policy governing how an action may be carried out: an approval it needs, an amount or time limit, something to never disclose, or a hard block. For example, "Tier 2 escalations require a documented troubleshooting summary". An action can be governed by several rules, and the answer cites each one.
 
 ## What comes back
 
-The reply is the agent's last message: its text for the consultant, with `citations` on the message (the action's ID, then the IDs of any rules that limit it). `reply_of(state)` in `agent/state.py` reads both.
+The reply is the agent's last message: its text for the consultant, with `citations` on the message (the action's ID, then the IDs of any rules governing it). `reply_of(state)` in `agent/state.py` reads both.
 
 In `data/procedures.json`, every step has `action_if_true_id` and the **last step of every procedure also has** `action_if_false_id`**.** 
 
@@ -40,9 +41,10 @@ Three cases are easy to confuse:
 
 | Case                    | When it happens                                                                                                     | What is returned                                                                                                                                                 | Where                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Message B**           | The agent can't find the matching procedure. For example, `classify_intent` returned a wrong or empty procedure ID. | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
+| **Message B**           | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
 | **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                             | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
 | **Unknown customer ID** | The `customer_id` is not in the CRM. This is checked first, before Claude is called. | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why) | `handle_crm_error`, `agent/supervisor.py` |
+| **Neo4j down**          | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call. | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason) | `check_neo4j`, `agent/supervisor.py` |
 
 
 
@@ -78,7 +80,7 @@ Three cases are easy to confuse:
   audit on every pull request that touches data/, etl/ or mock_crm/.
 ```
 
-**Answer** (every request). "Claude" and "OpenAI" mark the language-model calls:
+**Answer** (every request). "Claude", "OpenAI" and "Jev" (TypeSafe's classifier) mark the model calls:
 
 ```
                           consultant: message + customer_id
@@ -88,10 +90,19 @@ Three cases are easy to confuse:
                     unknown customer_id: reply "I couldn't find a customer..." and stop
                                          |
                                          v
-            classify_intent (Claude): reads the messages and the procedure list
+                    check_neo4j: is Neo4j reachable?
+                    no: reply "The knowledge graph is offline..." and stop
+                                         |
+                                         v
+        classify_intent (Jev): what does the consultant want done? (not the topic)
                                          |
   +--------------------------------------+------+
-  | troubleshooting + procedure id              | open_ended
+  | troubleshooting                             | open_ended
+  v                                             |
+  match_procedure (Jev): which of the 20        |
+    procedures, by name + when_to_use,          |
+    or "none" -> knowledge base instead ------->|
+  |                                             |
   v                                             v
   procedural_executor  (troubleshooting)        graph_rag_chain  (open-ended)
   --------------------------------------        -----------------------------
@@ -127,9 +138,50 @@ Three cases are easy to confuse:
           (cites the action and its rules, or the articles and their rules)
 ```
 
-Example: customer `CUST-1005` asks "Customer cannot activate roaming". The answer is NO at steps 1, 2 and 3, so the agent returns `Escalate to Tier 2 - unresolved by standard checks` with citations `["ACT-015", "R012"]`.
+Example: customer `CUST-1001` asks "Customer cannot activate roaming". The answer is NO at steps 1, 2 and 3, so the agent replies with the action, why, and each step checked, citing `["ACT-015", "R012"]`:
+
+```
+Escalate to Tier 2 - unresolved by standard checks
+
+Why: none of the 3 checks found the cause, so this is the procedure's fallback action.
+Checked (PROC-001 "Customer cannot activate roaming"):
+1. Roaming is disabled on the account: no (roaming_flag = True)
+2. Customer's plan is inactive: no (plan_status = active)
+3. Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)
+```
+
+The reply is built in plain code (`reply_text` in `agent/procedural_executor.py`), not by an LLM: the action is policy text and reaches the consultant word for word. For `CUST-1005`, whose device does not support roaming, step 3 answers YES and the reply is the device action (`ACT-027`).
+
+The terminal running the agent logs the same walk. `LOG_LEVEL` in `.env` sets how much: `DEBUG` (the default) logs every step and Jev's confidence numbers, `INFO` one line per decision.
 
 Note: Rules just for citations, it's doesn't affect how agent traverse the graph.
+
+**Routing** (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Jev answers two questions about the same conversation in one request. Both judge what the consultant wants done, not the topic: most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+
+```
+            state["messages"]  (whole conversation; last = new message)
+                            |
+              one Jev request, two questions
+          +-----------------+------------------+
+          v                                    v
+  path: Choice                           own_situation: Noul
+  "what does the consultant              "does the answer depend on THIS
+   want done?" (not the topic)            customer's account?"
+          |                                    |
+  returns a label + confidence           returns P(yes), 0 to 1
+  e.g. troubleshooting, 0.92             e.g. 0.87
+          +-----------------+------------------+
+                            v
+                 rules in plain code:
+  troubleshooting  AND confidence >= 0.5  AND P(yes) >= 0.5  --> troubleshooting --> match_procedure
+  troubleshooting  but either check fails                    --> open_ended      --> knowledge base
+  explain          on the very first message                 --> open_ended      --> knowledge base
+  otherwise                                                  --> the label as given
+```
+
+- **Why two questions.** A Choice always picks one of its labels, so its confidence only says how sure Jev is among the three. The Noul asks the yes/no distinction on its own, as an independent check before anything is walked. For "What are the early termination fees if I cancel my contract?", the Choice may lean to troubleshooting because of "cancel", but P(yes) should be low (the fee is the same for every customer), so it goes to the knowledge base.
+- **`match_procedure`** is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none". "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
+- The 0.5 thresholds are starting values, set at the top of `agent/supervisor.py`. Tune them on a labelled set.
 
 **Slack** (how a command reaches the agent). Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
 
@@ -160,22 +212,27 @@ Note: Rules just for citations, it's doesn't affect how agent traverse the graph
  Slack workspace        only the person who typed the command sees the reply
 ```
 
-A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages, the customer and the last trace are saved between messages. A message naming a different customer deletes that conversation and starts again.
+A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages, the current customer and each customer's last troubleshooting result are saved between messages. A message naming a different customer switches to them; the conversation is kept.
 
 ## Follow-up questions
 
-A conversation is one case. The agent is compiled with a checkpointer, and each conversation has its own `thread_id`, so the state is saved between messages: `messages` (the whole conversation), `customer_id`, and `step_trace` (what the last procedure walk checked, with the action it gave). A third path, `explain`, answers questions about the previous answer:
+The agent is compiled with a checkpointer, and each conversation has its own `thread_id`, so the state is saved between messages:
+- `messages`: the whole conversation;
+- `customer_id`: the customer currently being discussed (the last ID named);
+- `troubleshooting_results`: each customer's last procedure result, kept short: procedure, action, rules, and one line per step checked.
+
+One conversation can cover several customers. Naming a different customer switches to them and keeps everything; coming back to an earlier customer finds their result again. The walk's full `step_trace` stays inside the procedure subgraph and is never saved (see `agent/state.py`). A third path, `explain`, answers questions about an earlier answer:
 
 ```
- message 1  "CUST-1005 customer cannot activate roaming"   -> procedure walk -> reply: ACT-015, R012
-            saved: the reply, and step_trace (each step, YES or NO, the value it used, the action)
+ message 1  "CUST-1001 customer cannot activate roaming"   -> procedure walk -> reply: ACT-015, R012
+            saved: the reply, and troubleshooting_results["CUST-1001"]
  message 2  "what does that rule say?"    (no customer ID) -> explain: the rule's wording from Neo4j
- message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values from step_trace
- message 4  "What is the SIM replacement fee?"              -> knowledge-base search (the latest message only)
- message 5  "Reported service outage in customer's area"    -> a new walk; step_trace now describes it
+ message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values from CUST-1001's result
+ message 4  "CUST-1005 customer cannot activate roaming"   -> switch to CUST-1005, new walk; CUST-1001's result is kept
+ message 5  "CUST-1001 why?"                                -> back to CUST-1001: explain from CUST-1001's result
 ```
 
-`explain` gathers the facts in plain code (the trace, plus the action and rule text from Neo4j) and Claude words the answer from those only. The trace records what was true when the answer was given. It is not a cache: every new question re-checks the customer's data.
+`explain` gathers the facts in plain code (the current customer's result, plus the action and rule text from Neo4j) and Claude words the answer from those only. It is given only the current customer's result, so one customer's facts don't end up in another's answer. A result records what was true when the answer was given. It is not a cache: every new question re-checks the customer's data (see `docs/lessons.md`).
 
 Without a checkpointer every call is a single question (that is what `/agent` and `graph.invoke(...)` do). The Slack bot saves conversations in `checkpoints.db` (`config.get_checkpointer()`, SQLite).
 
@@ -195,21 +252,49 @@ uv run python -m slack_bot           # start the Slack bot: /agent and direct me
 ```
 
 ```python
+from langchain_core.messages import HumanMessage
+
+from agent.state import reply_of
 from agent.supervisor import build_supervisor_graph
 
 graph = build_supervisor_graph()
-result = graph.invoke({"query": "Customer cannot activate roaming", "customer_id": "CUST-1005"})
-print(result["answer"], result["citations"])
+result = graph.invoke({"messages": [HumanMessage("Customer cannot activate roaming")], "customer_id": "CUST-1005"})
+text, citations = reply_of(result)
+print(text, citations)
 ```
 
-Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Tests that call either are skipped when the key is missing.
+Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Routing (`classify_intent`, `match_procedure`) needs `TYPESAFE_API_KEY`. Tests that call any of them are skipped when the key is missing.
 
 ## Status
 
 - **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, the open-ended path, and follow-up questions in a saved conversation.
-- **`classify_intent` is a placeholder.** It works, but it is meant to be replaced. It shows Claude the procedure list and the conversation, and it can misroute a policy question that sounds like a procedure. **TODO:** once it is replaced, test it properly. Known case: "What are the early termination fees if I cancel my contract?" should go to the knowledge base, but the placeholder sends it to the "Contract cancellation request" procedure. `tests/e2e/open_ended/` has that test marked `xfail`; remove the marker and check it passes.
-- **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but not yet run against a real workspace. That needs your Slack tokens (see `slack_bot/slack_setup.md`).
-- **Not built:** Microsoft Teams (it needs a public HTTPS endpoint and an Azure Bot registration). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
+- **Routing uses Jev, but has not been run live yet** (see TODO below).
+- **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but never run against a real workspace — that needs your Slack tokens (see `slack_bot/slack_setup.md`).
+- **Not built:** Microsoft Teams (needs a public HTTPS endpoint and an Azure Bot registration, no Socket Mode equivalent). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
+
+## TODO
+
+**Routing (`classify_intent` + `match_procedure`)** — built with Jev, tested only with a fake classifier. To finish:
+- Add `TYPESAFE_API_KEY` to `.env` and run the e2e tests. The old Claude classifier sent "What are the early termination fees if I cancel my contract?" to the "Contract cancellation request" procedure. `tests/e2e/open_ended/test_knowledge_questions.py::test_a_fee_question_that_sounds_like_a_procedure_goes_to_the_knowledge_base` is still marked `xfail`; remove the marker once it passes.
+- Tune the three thresholds at the top of `agent/supervisor.py` (all 0.5 for now) on a labelled set: for each procedure, one case message and one policy question on the same topic, plus follow-ups and messages that fit no procedure.
+- If the procedure list grows to the hundreds, narrow it first with hybrid search over the procedures, and let Jev choose among the top few.
+
+**Ticket conditions** — discussed, not implemented. CRM stays read-only for now; the CRM only records what already happened, it doesn't decide how to interpret the current message.
+- `COND-024` ("issue still ongoing") can become a plain field check on `recent_tickets[-1].resolved` today — no data change needed.
+- `COND-027`/`COND-028` (fraud, refund intent) have no structured field to check yet. Either add booleans to `recent_tickets` (e.g. `suspected_fraud`, `refund_requested`), or keep them as the `ticket_text` LLM fallback — structured field first, LLM only when it's missing/generic.
+- HITL fallback: when the LLM is low-confidence, pause with `interrupt()` and ask the consultant instead of guessing, rather than silently treating it as NO. Needs the walk compiled with a real checkpointer (currently `checkpointer=False`, which blocks interrupts) and a Slack DM resume path that checks whether a conversation is paused before starting a new turn.
+
+**Trimming long conversations** — not done. Every Jev and Claude call sends the whole conversation, which grows when one conversation covers several customers. Use `trim_messages` (`langchain_core.messages`) on what each call is given, not on what is saved. `SummarizationMiddleware` does not fit: like all middleware it only runs inside `create_agent`, and the supervisor is a plain `StateGraph`.
+
+**Phase 7B — Eval & Observability** (`docs/proposed_plan.md`, not started):
+- Two LangSmith datasets: troubleshooting (query + customer_id → expected procedure/action) and open-ended (question → expected article/rule IDs).
+- Code evaluators: `procedure_resolved`, `correct_path_routed`, `citation_present`, `no_hallucinated_rule`.
+- LLM-judge evaluators (trend tracking, non-blocking): `resolution_relevance`, `citation_faithfulness`, `policy_compliance`.
+- LangSmith alerts: tool error rate, Neo4j returning null, a procedure not terminating, Graph RAG with no citations.
+- `baselines.json` seeded from 20-30 real queries, flag anything over 3x the median latency.
+- No `eval/` directory exists yet.
+
+**Slack** — never run against a real workspace; needs your tokens.
 
 ## Repo map
 
