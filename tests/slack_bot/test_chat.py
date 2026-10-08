@@ -106,15 +106,26 @@ def test_the_same_customer_again_keeps_the_conversation():
     assert checkpointer.deleted == []
 
 
-def test_a_different_customer_starts_a_fresh_conversation():
-    """Naming another customer deletes the saved conversation first, so two cases never mix."""
+def test_a_different_customer_switches_without_losing_the_conversation():
+    """Naming another customer makes them the current one; nothing saved is deleted."""
     chat, graph, checkpointer = make_chat()
     chat.send("t1", "roaming", "CUST-1005")
     chat.send("t1", "roaming", "CUST-1002")
 
-    assert checkpointer.deleted == ["t1"]
+    assert checkpointer.deleted == []
     assert chat.known_customer("t1") == "CUST-1002"
     assert graph.invocations[1][1]["customer_id"] == "CUST-1002"
+
+
+def test_coming_back_to_an_earlier_customer_switches_back():
+    """A -> B -> A in one conversation: each switch only changes the current customer."""
+    chat, _, checkpointer = make_chat()
+    chat.send("t1", "roaming", "CUST-1005")
+    chat.send("t1", "bill", "CUST-1002")
+    chat.send("t1", "why?", "CUST-1005")
+
+    assert checkpointer.deleted == []
+    assert chat.known_customer("t1") == "CUST-1005"
 
 
 def test_conversations_are_kept_apart_by_thread_id():
@@ -124,8 +135,9 @@ def test_conversations_are_kept_apart_by_thread_id():
     chat.send("t2", "roaming", "CUST-1002")
     chat.send("t2", "roaming", "CUST-1001")
 
-    assert checkpointer.deleted == ["t2"]
+    assert checkpointer.deleted == []
     assert chat.known_customer("t1") == "CUST-1005"
+    assert chat.known_customer("t2") == "CUST-1001"
 
 
 def test_two_messages_on_one_conversation_never_run_at_the_same_time():
