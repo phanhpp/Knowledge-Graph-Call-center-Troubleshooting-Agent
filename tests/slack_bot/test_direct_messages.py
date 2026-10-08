@@ -2,6 +2,7 @@
 
 import pytest
 
+from slack_bot.access import Access
 from slack_bot.app import handle_direct_message, is_direct_message_from_user
 from slack_bot.formatting import (
     ERROR_REPLY,
@@ -152,7 +153,7 @@ def test_a_user_outside_the_allow_list_is_refused_without_running_the_agent():
     """Only listed users may use the bot when a list is set."""
     client, chat = FakeClient(), FakeChat()
 
-    handle_direct_message(dm("CUST-1005 roaming", user="U9"), client, chat, allowed_users=["U1"])
+    handle_direct_message(dm("CUST-1005 roaming", user="U9"), client, chat, access=Access(["U1"]))
 
     assert chat.sent == []
     assert client.posted == [{"channel": "D1", "text": NOT_ALLOWED}]
@@ -162,7 +163,7 @@ def test_a_listed_user_is_answered():
     """A user on the list gets an answer."""
     client, chat = FakeClient(), FakeChat()
 
-    handle_direct_message(dm("CUST-1005 roaming", user="U1"), client, chat, allowed_users=["U1"])
+    handle_direct_message(dm("CUST-1005 roaming", user="U1"), client, chat, access=Access(["U1"]))
 
     assert chat.sent
 

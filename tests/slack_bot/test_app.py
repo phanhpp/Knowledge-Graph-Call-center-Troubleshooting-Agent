@@ -1,5 +1,6 @@
 """Tests for slack_bot/app.py: the /agent command handler, driven by a fake `respond` and a fake agent."""
 
+from slack_bot.access import Access
 from slack_bot.app import REPLY_VISIBILITY, build_app, handle_command
 from slack_bot.formatting import ERROR_REPLY, MISSING_CUSTOMER_ID, MISSING_QUESTION, NOT_ALLOWED, WRONG_CHANNEL
 
@@ -153,7 +154,7 @@ def test_a_user_outside_the_allow_list_is_refused_without_running_the_agent():
     """Only listed users may use /agent when a list is set."""
     respond, ask = FakeRespond(), make_ask({"answer": "unused", "citations": []})
 
-    handle_command(command("CUST-1005 roaming"), respond, ask, allowed_users=["U2"])
+    handle_command(command("CUST-1005 roaming"), respond, ask, access=Access(["U2"]))
 
     assert ask.calls == []
     assert respond.texts == [NOT_ALLOWED]
@@ -163,7 +164,7 @@ def test_a_listed_user_is_answered():
     """A user on the list gets an answer."""
     respond, ask = FakeRespond(), make_ask({"answer": "ok", "citations": []})
 
-    handle_command(command("CUST-1005 roaming"), respond, ask, allowed_users=["U1"])
+    handle_command(command("CUST-1005 roaming"), respond, ask, access=Access(["U1"]))
 
     assert ask.calls
 
