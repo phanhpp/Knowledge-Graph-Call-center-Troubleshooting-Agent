@@ -1,5 +1,8 @@
-"""Procedural Executor — deterministic Step-chain traversal for almost every
-condition, with one deliberate exception for free-text interpretation.
+"""Procedural Executor —  iterates sequentially through procedure steps (Step 1, Step 2, etc.) 
+until a condition evaluates to True (finding the root cause) or reaches the end of the chain.
+
+Deterministic Step-chain traversal for almost every condition, 
+except free-text interpretation.
 
 Design decision (confirmed over Vodafone's LLM Compiler pattern): most
 Conditions are validated by one or a few *declared* API calls (see
@@ -16,15 +19,20 @@ description isn't a lookup, it's language understanding, which deterministic
 code genuinely can't do. That's the only place an LLM enters this executor,
 and the only place "Replanning" is real rather than decorative.
 
-Flow:
-    fetch_step -> route_after_fetch
-        no matching Step found  -> handle_fetch_error -> END (e.g. matched_procedure_id
-                                    was hallucinated/wrong/None — never crash on it)
-        field_check/chain_check -> evaluate_field_condition  --\\
-        ticket_text             -> interpret_ticket_condition --+--> advance_or_resolve
-                                                                       condition true                  -> resolve -> END
-                                                                       condition false, more steps     -> advance current_step_id, loop back to fetch_step
-                                                                       condition false, terminal step  -> resolve (false-branch catch-all action) -> END
+Flow (one walk):
+
+    fetch_step: load step N (starts at 1)
+      |
+      +-- step not found --------> handle_fetch_error ----------> END
+      +-- field or chain check --> evaluate_field_condition ----+
+      +-- ticket check ----------> interpret_ticket_condition --+
+                                                               |
+      +--------------------------------------------------------+
+      v
+    advance_or_resolve
+      +-- YES -------------> resolve: reply with this step's action --> END
+      +-- NO, last step ---> resolve: reply with the fallback action --> END
+      +-- NO, more steps --> step N+1: back to fetch_step
 
 State each node needs (r = reads, w = writes):
 
@@ -66,6 +74,7 @@ from langgraph.types import Command
 
 from agent.state import ProceduralExecutorState
 from agent.ticket_interpreter import build_ticket_interpreter_graph
+from agent.utils import reply
 from config import get_driver
 from etl.io_utils import load_json
 from mock_crm.condition_evaluator import get_condition, get_nested_field, resolve_condition
@@ -76,6 +85,10 @@ from mock_crm.condition_evaluator import get_condition, get_nested_field, resolv
 logger = logging.getLogger(__name__)
 from agent.utils import reply
 
+# Locates the specified step of a procedure and 
+# fetches its condition, the next step (if any), and any actions attached to it.
+# Every step has an action for "true" (its condition answered YES). Only the last step also has one for "false"
+# collects the action outcomes and IDs into a list e.g. [{"outcome": "true", "actionId": "ACT-101"}, {"outcome": "false", "actionId": "ACT-102"}]
 FETCH_STEP_CYPHER = """
 MATCH (s:Step {procedureId: $procedure_id, stepId: $step_id})
 MATCH (s)-[:HAS_CONDITION]->(c:Condition)
@@ -88,6 +101,8 @@ RETURN c.conditionId AS conditionId,
 
 NO_ANSWER = "I couldn't produce an answer for this request."
 
+# Retrieves the instructions for a specific action and any compliance rules governing it.
+# Returns the text response to display to the consultant and a list (collect) of applicable rule IDs for auditing.
 RESOLVE_ACTION_CYPHER = """
 MATCH (a:Action {actionId: $action_id})
 OPTIONAL MATCH (a)-[:GOVERNED_BY]->(r:Rule)

@@ -4,6 +4,31 @@ This folder answers yes/no questions about a customer, for example "is there an 
 
 In the real system these answers come from the company's CRM and other internal systems. This project has no access to those, so each one is replaced here by a JSON file in `data/`. Nothing calls the network, and nothing here changes any data. It only reads.
 
+## Core components
+
+- **Data files (**`data/*.json`**)**: 60 customer records (`crm_records.json`) and three lookup tables behind them: network status (`network_status.json`), device financing (`device_financing.json`) and fraud records (`fraud_gateway.json`). A customer record links to them by `service_area.zip_code`, `device.imei` and `customer_id`.
+- **Condition evaluator (**`condition_evaluator.py`**)**: answers a condition for one customer, `True` or `False`, in one of two ways:
+  1. **Simple check**: compares one field of the CRM record with a value, e.g. `roaming_flag == false`.
+  2. **Chain check**: runs several lookups in order, each using the previous one's result, e.g. read the customer's `zip_code` from the CRM record, then look that ZIP code up in `network_status.json` for an active outage.
+  Ticket checks (reading a ticket's free text) are not done here: they need an LLM, so `agent/ticket_interpreter.py` handles them.
+- **Stores (**`*_store.py`**)**: one per data file. Each loads its file once, keeps it in memory, and returns one record by key. A missing key raises an error named after it, e.g. `ZipNotFoundError`, `ImeiNotFoundError`, `CustomerNotFoundError`.
+
+
+
+## Files
+
+
+| File                        | Data file it reads      | What it does                                                                              |
+| --------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| `crm_store.py`              | `crm_records.json`      | `get_customer(customer_id)` returns the customer's CRM record.                            |
+| `network_status_store.py`   | `network_status.json`   | `get_network_status(zip_code)` says whether an outage is active in that ZIP.              |
+| `device_financing_store.py` | `device_financing.json` | `get_device_financing(imei)` returns how much the customer still owes on the device.      |
+| `fraud_gateway_store.py`    | `fraud_gateway.json`    | `get_fraud_status(customer_id)` says whether the account is flagged as high fraud risk.   |
+| `condition_evaluator.py`    | `conditions.json`       | Answers a condition. Runs the simple check or the chain check depending on the condition. |
+
+
+The four `*_store.py` files all work the same way. They load their JSON file once, keep it in memory, and look records up by key. If the key isn't found they raise an error named after the lookup, for example `ZipNotFoundError`.
+
 ## Terms used below
 
 - **CRM record**: everything we know about one customer (ID, plan, device, ZIP code and so on). Stored in `data/crm_records.json`, 60 customers.
@@ -13,143 +38,74 @@ In the real system these answers come from the company's CRM and other internal 
 
 This folder's job is to answer a condition for a given customer: yes (`True`) or no (`False`).
 
-## How the data files connect
+## How the mock CRM works
 
-Every file in `data/` is a list of records. Records in one file point to records in another by ID, so the files together describe one connected graph. Here are all the files and how they link:
-
-```mermaid
-erDiagram
-    PROCEDURE ||--|{ STEP : "has"
-    STEP }o--|| CONDITION : "asks (condition_id)"
-    STEP }o--|| ACTION : "answer yes (condition true): gives (action_if_true_id)"
-    STEP }o--o| ACTION : "answer no (condition false), last step only: gives (action_if_false_id)"
-    STEP |o--o| STEP : "answer no (condition false): goes to (next_step)"
-    RULE }o--|{ ACTION : "limits (applies_to_action_ids)"
-    KB_ARTICLE }o--o{ RULE : "cites (related_rule_ids)"
-    CONDITION }o--o{ CRM_RECORD : "reads a value from"
-    CRM_RECORD ||--o{ TICKET : "recent_tickets"
-    CRM_RECORD }o--|| NETWORK_STATUS : "same zip_code"
-    CRM_RECORD ||--|| DEVICE_FINANCING : "same imei"
-    CRM_RECORD ||--|| FRAUD_GATEWAY : "same customer_id"
-
-    PROCEDURE {
-        string procedure_id PK
-        string procedure_name
-        string category
-    }
-    STEP {
-        int step_id PK "inside procedures.json, no file of its own"
-        string description
-        string condition_id FK
-        string action_if_true_id FK
-        string action_if_false_id FK "last step only"
-        int next_step FK "empty on the last step"
-    }
-    CONDITION {
-        string condition_id PK
-        string description
-        string field "simple check: path into the CRM record"
-        string operator "simple check"
-        string value "simple check"
-        string verification_api "simple check"
-        list verification_chain "chain check: ordered lookups"
-        string kind "ticket_text conditions only"
-        string interpretation_question "ticket_text conditions only"
-    }
-    ACTION {
-        string action_id PK
-        string text "what the consultant is told to do"
-        string category
-        bool is_resolution
-    }
-    RULE {
-        string rule_id PK
-        string description
-        string constraint_type
-        string detail
-        list applies_to_action_ids FK
-    }
-    KB_ARTICLE {
-        string article_id PK
-        string title
-        string category
-        string content
-        list related_rule_ids FK
-    }
-    CRM_RECORD {
-        string customer_id PK
-        string name
-        string account_status
-        string plan_name
-        string plan_status
-        bool roaming_flag
-        string sim_status
-        string contract_end_date
-        int tenure_months
-        string device_imei FK "device.imei"
-        string device_model "device.model"
-        bool device_roaming_compatible "device.device_roaming_compatible"
-        float billing_current_balance "billing.current_balance"
-        string billing_payment_method "billing.payment_method"
-        string billing_last_payment_status "billing.last_payment_status"
-        string service_area_zip_code FK "service_area.zip_code"
-    }
-    TICKET {
-        string date
-        string issue
-        bool resolved
-        string description "free text"
-    }
-    NETWORK_STATUS {
-        string zip_code PK
-        bool outage_active
-    }
-    DEVICE_FINANCING {
-        string imei PK
-        float remaining_balance
-    }
-    FRAUD_GATEWAY {
-        string customer_id PK
-        bool risk_flag
-    }
+```
+ inject_crm(): once per turn, first thing               [agent/supervisor.py]
+ |
+ +--> get_customer("CUST-1001")                         [mock_crm/crm_store.py]
+ |      reads data/crm_records.json (read once)
+ |      unknown ID --> CustomerNotFoundError
+ |  puts the record in state["crm_context"]
+ v
+ procedure walk, for each step                          [agent/procedural_executor.py]
+ |
+ v
+ fetch_step(): the condition ID, from Neo4j             [agent/procedural_executor.py]
+ +--> get_condition(id): the full condition             [mock_crm/condition_evaluator.py]
+ |
+ +-- field or chain check:
+ |   evaluate_field_condition()                         [agent/procedural_executor.py]
+ |   +--> resolve_condition(crm_context, cond)          [mock_crm/condition_evaluator.py]
+ |        |
+ |        +-- no chain: evaluate_condition()            [mock_crm/condition_evaluator.py]
+ |        |     COND-001: roaming_flag == false ?
+ |        |     (no API called; verification_api
+ |        |      is only a label)
+ |        |
+ |        +-- chain: evaluate_chain_condition()         [mock_crm/condition_evaluator.py]
+ |              COND-023: zip "94103" from crm_context
+ |              +--> get_network_status("94103")        [mock_crm/network_status_store.py]
+ |                     outage_active == true ?
+ |              other chains, the same way:
+ |              +--> get_device_financing(imei)         [mock_crm/device_financing_store.py]
+ |              +--> get_fraud_status(customer_id)      [mock_crm/fraud_gateway_store.py]
+ |
+ +-- ticket check:
+     interpret_ticket_condition()                       [agent/procedural_executor.py]
+     +--> Claude reads recent_tickets[0]                [agent/ticket_interpreter.py]
 ```
 
-In the labels, "yes" means the step's condition is true for this customer and "no" means it is false. A step only follows `next_step` on no. On yes, the procedure stops at that step.
+- **Read-only.** Nothing writes to the CRM or the lookup files.
+- **The customer's record is loaded once per turn**, by `inject_crm` (`agent/supervisor.py`). Every check after that reads the copy in state (`crm_context`).
+- **Only chain checks reach the other lookup files**, keyed by a value the previous lookup produced.
 
-How to read the symbols: the symbol next to a box says how many of that box one item on the other side connects to. `||` is exactly one, `o|` or `|o` is zero or one, `|{` or `}|` is one or more, and `o{` or `}o` is zero or more. For example, `STEP }o--|| CONDITION` means each step asks exactly one condition, and one condition can be asked by zero or more steps.
 
-Some attribute names use underscores where the real JSON is nested. `device_imei` is `device.imei` in `crm_records.json`, and the quoted note on each one gives the real path. `TICKET` is not a file. It is the `recent_tickets` list inside each CRM record.
 
-### The links, one by one
+## How the data files connect
 
-| From (file and field) | To (file and field) | What they share |
-|---|---|---|
-| `procedures.json` step `condition_id` | `conditions.json` `condition_id` | A condition ID |
-| `procedures.json` step `action_if_true_id`, `action_if_false_id` | `actions.json` `action_id` | An action ID |
-| `procedures.json` step `next_step` | `step_id` of another step in the same procedure | A step number |
-| `rules.json` `applies_to_action_ids` | `actions.json` `action_id` | A list of action IDs |
-| `kb_articles.json` `related_rule_ids` | `rules.json` `rule_id` | A list of rule IDs |
-| `conditions.json` `field` | A field in `crm_records.json`, written as a path such as `device.imei` | A field path |
-| `conditions.json` `verification_chain` | A CRM field path, or one of the three lookup files below | A field path, then the value from the step before |
-| `crm_records.json` `service_area.zip_code` | `network_status.json` `zip_code` | A ZIP code |
-| `crm_records.json` `device.imei` | `device_financing.json` `imei` | A device IMEI |
-| `crm_records.json` `customer_id` | `fraud_gateway.json` `customer_id` | A customer ID |
+Files point to each other by ID:
 
-The last three links are only used by chain conditions: `COND-023` (network), `COND-025` (financing) and `COND-026` (fraud). Conditions and actions are stored once and referenced by ID, so many steps can share the same one.
+```
+[ procedures.json ]
+  │
+  ├─► condition_id ──► [ conditions.json ] ──► (Reads Customer Data)
+  │                                                  │
+  │                                                  ├─► [ crm_records.json ]
+  │                                                  │      │
+  │                                                  │      ├─► zip_code ──► [ network_status.json ]
+  │                                                  │      ├─► imei ──────► [ device_financing.json ]
+  │                                                  │      └─► customer_id─► [ fraud_gateway.json ]
+  │
+  ├─► action_if_true_id  ──┐
+  └─► action_if_false_id ──┴─► [ actions.json ] ◄── applies_to_action_ids ── [ rules.json ]
+                                                                                   ▲
+                                                                                   │ related_rule_ids
+                                                                           [ kb_articles.json ]
 
-The current data has 60 customers, 20 procedures, 28 conditions, 26 actions, 15 rules and 25 KB articles. The 60 customers share only 10 ZIP codes, so several customers can point to the same network status record. Each customer has exactly one financing record and one fraud record.
+```
 
-An ID typed wrongly in one file breaks the link silently, so `etl/validate.py` checks the ID links before the data is loaded. It checks the step-to-condition, step-to-action, next-step, rule-to-action and article-to-rule links. It does not check the three CRM-to-lookup links above.
-
-### Example: following one procedure
-
-`PROC-001` ("Customer cannot activate roaming") has three steps:
-
-1. **Step 1** asks `COND-001` ("Roaming is disabled on the account"). Yes means roaming is disabled: the procedure stops and the consultant gets `ACT-001` ("Enable roaming flag and inform customer of 10-minute activation delay"). No means roaming is already enabled: go to step 2.
-2. **Step 2** asks `COND-003` ("Customer's plan is inactive"). Yes: stop and give `ACT-002`. No: go to step 3.
-3. **Step 3** is the last step. It asks `COND-006` ("Device does not support roaming bands in the destination country"). Yes: that is the cause, so stop and give `ACT-027` (explain the device can't roam there; advise a compatible device). No: every check passed and nothing explains the problem, so the consultant gets `ACT-015` ("Escalate to Tier 2 - unresolved by standard checks").
-
-Rules and articles sit beside this path. For example, rule `R001` ("Refunds over $50 require supervisor approval") limits action `ACT-016`, and article `KB-001` cites rule `R006`.
+Conditions and actions are stored once and shared by many steps. `etl/validate.py` checks every ID link above before the data is loaded, except the three lookups by ZIP code, IMEI and customer ID. The main README walks through one procedure, `PROC-001`, step by step.
 
 ## The two kinds of condition it answers
 
@@ -169,31 +125,30 @@ The steps of a chain are written down in `conditions.json` under `verification_c
 
 A third kind, `ticket_text`, means reading a free-text support ticket. That needs a language model, so it is handled in `agent/ticket_interpreter.py`, not here.
 
-## Files
-
-| File | Data file it reads | What it does |
-|---|---|---|
-| `crm_store.py` | `crm_records.json` | `get_customer(customer_id)` returns the customer's CRM record. |
-| `network_status_store.py` | `network_status.json` | `get_network_status(zip_code)` says whether an outage is active in that ZIP. |
-| `device_financing_store.py` | `device_financing.json` | `get_device_financing(imei)` returns how much the customer still owes on the device. |
-| `fraud_gateway_store.py` | `fraud_gateway.json` | `get_fraud_status(customer_id)` says whether the account is flagged as high fraud risk. |
-| `condition_evaluator.py` | `conditions.json` | Answers a condition. Runs the simple check or the chain check depending on the condition. |
-
-The four `*_store.py` files all work the same way. They load their JSON file once, keep it in memory, and look records up by key. If the key isn't found they raise an error named after the lookup, for example `ZipNotFoundError`.
-
 ## Inside `condition_evaluator.py`
 
-| Function | What it does |
-|---|---|
-| `get_condition(condition_id)` | Returns the full condition from `conditions.json`. |
-| `resolve_condition(record, condition)` | The one function other code calls. It picks the simple or chain check for that condition. |
-| `evaluate_condition(record, condition)` | The simple check. |
-| `evaluate_chain_condition(record, condition)` | The chain check. |
-| `get_nested_field(record, "device.imei")` | Reads a value from inside the record, following the dots. Raises `FieldNotFoundError` if a part of the path is missing. |
+```
+ agent/procedural_executor.py, at each step
+   |
+   |  get_condition("COND-023")   --> the full condition, from conditions.json (read once)
+   |  resolve_condition(crm_context, condition)
+   v
+ resolve_condition: does the condition have a verification_chain?
+   |
+   +-- no:  evaluate_condition                 simple check
+   |          get_nested_field(record, "roaming_flag")    follows the dots, e.g. "device.imei"
+   |          compare with == != > < >= <=
+   |
+   +-- yes: evaluate_chain_condition           chain check, lookups in order:
+              source "crm"   --> get_nested_field(record, reads)
+              other source   --> CHAIN_SOURCES[source](a value from an earlier lookup)
+                                   network_status   --> get_network_status(zip_code)
+                                   device_financing --> get_device_financing(imei)
+                                   fraud_gateway    --> get_fraud_status(customer_id)
+              compare the last value with == != > < >= <=
+```
 
-Values are compared with `==`, `!=`, `>`, `<`, `>=` and `<=`. The code converts types where it can, so a text `"true"` matches a real `true`, and a list is compared by its length. It never uses `eval()`.
-
-`CHAIN_SOURCES` in this file maps each chain step's `source` name (`network_status`, `device_financing`, `fraud_gateway`) to the store function that looks it up. A chain step with `source: crm` reads from the customer's record instead.
+Comparisons convert types first: a boolean on either side compares as booleans (so the text `"true"` matches `true`), a number compares as numbers, and anything else as text. A list field compares by its length. It never uses `eval()`. Errors: `FieldNotFoundError` (a missing field path), `UnsupportedOperatorError` (an unknown operator), `TypeCoercionError` (a value that can't be turned into a number).
 
 ## Who uses this folder
 
@@ -201,11 +156,15 @@ Values are compared with `==`, `!=`, `>`, `<`, `>=` and `<=`. The code converts 
 - `agent/procedural_executor.py` calls `get_condition()` and `resolve_condition()` at each procedure step.
 - `etl/validate.py` uses `CHAIN_SOURCES` to check `conditions.json` before the data is loaded.
 
+
+
 ## Adding another mock lookup
 
 1. Add `data/<name>.json` and `mock_crm/<name>_store.py`. Copy an existing store.
 2. Add one line for it in `CHAIN_SOURCES` in `condition_evaluator.py`.
 3. Use it as a `source` in a condition's `verification_chain` in `conditions.json`.
+
+
 
 ## What is checked, and what isn't
 
