@@ -4,7 +4,7 @@ customer ID. Needs Neo4j, ANTHROPIC_API_KEY and TYPESAFE_API_KEY."""
 
 import pytest
 
-from agent.state import reply_of
+from agent.utils import reply_of
 from tests.e2e.conversation import Conversation
 from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key
 

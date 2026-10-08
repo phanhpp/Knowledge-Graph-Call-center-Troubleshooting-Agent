@@ -16,7 +16,7 @@ import os
 import pytest
 
 from agent.procedural_executor import build_procedural_executor_graph
-from agent.state import reply_of
+from agent.utils import reply_of
 from mock_crm.crm_store import get_customer
 
 GRAPH = build_procedural_executor_graph()

@@ -207,7 +207,7 @@ def serve() -> None:
     import config  # noqa: F401  (loads .env)
     from langchain_core.messages import HumanMessage
 
-    from agent.state import reply_of
+    from agent.utils import reply_of
     from agent.supervisor import build_supervisor_graph
     from config import get_checkpointer, neo4j_unavailable_reason, setup_logging
 

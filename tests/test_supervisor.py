@@ -12,7 +12,7 @@ from langchain_typesafe import ChoiceAnswer, ClassifierResponse, NoulAnswer
 from langgraph.graph import END
 
 from agent.procedural_executor import build_procedural_executor_graph
-from agent.state import reply_of
+from agent.utils import reply_of
 from agent.supervisor import (
     NEO4J_DOWN,
     NOTHING_TO_EXPLAIN,

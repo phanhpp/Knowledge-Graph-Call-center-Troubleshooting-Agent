@@ -22,7 +22,7 @@ Flow of one turn:
                                          v
                                         END
 
-Each path returns its reply as an AIMessage (see agent/state.py reply()), which LangGraph adds to
+Each path returns its reply as an AIMessage (see agent/utils.py reply()), which LangGraph adds to
 `messages`. That is the only place the answer lives; its citations are on the message.
 
 With a checkpointer and a thread_id, the state is saved between turns (see agent/state.py), which is
@@ -49,7 +49,8 @@ from langgraph.types import Command
 
 from agent.graph_rag_chain import graph_rag_chain
 from agent.procedural_executor import build_procedural_executor_graph, procedure_name
-from agent.state import SuperAgentState, reply
+from agent.state import SuperAgentState
+from agent.utils import reply
 from config import get_driver, neo4j_unavailable_reason
 from etl.io_utils import load_json
 from mock_crm.crm_store import CustomerNotFoundError, get_customer

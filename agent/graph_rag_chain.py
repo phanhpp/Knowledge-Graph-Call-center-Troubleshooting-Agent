@@ -56,7 +56,8 @@ from neo4j_graphrag.llm import AnthropicLLM
 from neo4j_graphrag.retrievers import HybridCypherRetriever
 from neo4j_graphrag.types import RetrieverResultItem
 
-from agent.state import SuperAgentState, reply
+from agent.state import SuperAgentState
+from agent.utils import reply
 from config import get_driver
 
 # Appended by neo4j-graphrag after the hybrid search; `node` is one matched Article and `score`
@@ -112,7 +113,7 @@ def graph_rag_chain(state: SuperAgentState) -> dict:
     The query text is the latest message in state["messages"]. The earlier messages are not passed
     to the search, so it sees the question exactly as typed.
 
-    Returns the reply (see agent/state.py reply()). Its citations are each retrieved article's ID
+    Returns the reply (see agent/utils.py reply()). Its citations are each retrieved article's ID
     followed by the IDs of the rules it cites (a rule shared by several articles is listed once).
     This covers all 5 retrieved articles, not only the ones Claude relied on.
     """

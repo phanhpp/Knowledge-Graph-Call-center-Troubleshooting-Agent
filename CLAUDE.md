@@ -57,7 +57,7 @@ When generating or modifying the synthetic datasets described in `docs/input_pla
 ```
 data/    — crm_records.json, conditions.json, actions.json, procedures.json, rules.json, kb_articles.json
 etl/     — validate.py, load_to_neo4j.py
-agent/   — state.py, supervisor.py, procedural_executor.py, graph_rag_chain.py
+agent/   — state.py (graph state only), supervisor.py, procedural_executor.py, graph_rag_chain.py, ticket_interpreter.py, data_model.py (Reply), utils.py (reply / reply_of)
 mock_crm/ — crm_store.py
 ```
 

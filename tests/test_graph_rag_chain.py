@@ -11,7 +11,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from agent.graph_rag_chain import graph_rag_chain
-from agent.state import reply_of
+from agent.utils import reply_of
 from etl.io_utils import load_json
 
 requires_keys = pytest.mark.skipif(

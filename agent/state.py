@@ -2,8 +2,8 @@
 
 SuperAgentState is the top-level Supervisor state. It extends MessagesState, which brings the
 `messages` key: the conversation, added to by LangGraph's `add_messages` reducer. The agent's reply
-lives there and only there: each path returns it as an AIMessage (see reply()), with its citations
-in the message's `additional_kwargs`. There is no separate `answer` field.
+lives there and only there: each path returns it as an AIMessage (see agent/utils.py reply()), with
+its citations in the message's `additional_kwargs`. There is no separate `answer` field.
 
 With a checkpointer and a thread_id the whole state is saved between calls. That is what lets a
 follow-up see the earlier messages, the current customer, and each customer's last procedure result.
@@ -21,9 +21,8 @@ by message id, so the messages the subgraph hands back are not added a second ti
 never saved; the walk hands back only the concise `troubleshooting_results` entry.
 """
 
-from typing import Annotated, Literal, NamedTuple, Optional, TypedDict
+from typing import Annotated, Literal, Optional
 
-from langchain_core.messages import AIMessage
 from langgraph.graph import MessagesState
 
 
@@ -73,23 +72,3 @@ class ProceduralExecutorState(MessagesState, total=False):
     condition_result: Optional[bool]  # this step's answer: True is YES
     step_trace: list[dict]  # every step checked, in full; becomes the reply's checklist and the result
 
-
-def reply(text: str, citations: list[str] | None = None) -> dict:
-    """The state update for the agent's reply: one AIMessage, with its citations on it.
-
-    Every path returns this (or merges it into a larger update) instead of writing an `answer` field.
-    """
-    return {"messages": [AIMessage(content=text, additional_kwargs={"citations": list(citations or [])})]}
-
-
-class Reply(NamedTuple):
-    """The agent's reply: its text and the IDs it cites."""
-
-    text: str
-    citations: list[str]
-
-
-def reply_of(state: dict) -> Reply:
-    """The agent's latest reply in `state` (the last message): its text and its citations."""
-    message = state["messages"][-1]
-    return Reply(str(message.content), list(message.additional_kwargs.get("citations", [])))

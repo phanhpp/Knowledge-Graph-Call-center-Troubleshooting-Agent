@@ -5,7 +5,7 @@ from typing import Optional
 
 from langchain_core.messages import HumanMessage
 
-from agent.state import reply_of
+from agent.utils import reply_of
 
 
 class AgentChat:

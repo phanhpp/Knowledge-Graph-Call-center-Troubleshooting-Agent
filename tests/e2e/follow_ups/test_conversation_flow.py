@@ -3,7 +3,7 @@ OPENAI_API_KEY for the knowledge-base test)."""
 
 import pytest
 
-from agent.state import reply_of
+from agent.utils import reply_of
 from tests.e2e.conversation import Conversation
 from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key, requires_openai_key
 

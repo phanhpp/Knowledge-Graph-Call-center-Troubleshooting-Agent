@@ -7,7 +7,7 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from agent.supervisor import build_supervisor_graph
-from agent.state import reply_of
+from agent.utils import reply_of
 from tests.e2e.conversation import Conversation
 from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key
 

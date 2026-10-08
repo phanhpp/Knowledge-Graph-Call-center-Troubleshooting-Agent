@@ -64,7 +64,7 @@ from typing import Literal, Optional
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from agent.state import ProceduralExecutorState, reply
+from agent.state import ProceduralExecutorState
 from agent.ticket_interpreter import build_ticket_interpreter_graph
 from config import get_driver
 from etl.io_utils import load_json
@@ -74,6 +74,7 @@ from mock_crm.condition_evaluator import get_condition, get_nested_field, resolv
 # used, e.g. "PROC-001 step 1: Roaming is disabled on the account -> NO (roaming_flag = True)".
 # The level is set by LOG_LEVEL (see config.setup_logging).
 logger = logging.getLogger(__name__)
+from agent.utils import reply
 
 FETCH_STEP_CYPHER = """
 MATCH (s:Step {procedureId: $procedure_id, stepId: $step_id})

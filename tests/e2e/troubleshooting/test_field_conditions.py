@@ -3,7 +3,7 @@ checks on the customer's CRM record. Needs Neo4j and TYPESAFE_API_KEY (classify_
 
 import pytest
 
-from agent.state import reply_of
+from agent.utils import reply_of
 from etl.io_utils import load_json
 from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key
 

@@ -3,7 +3,7 @@ so none of these tests needs an API key or Neo4j."""
 
 import pytest
 
-from agent.state import reply_of
+from agent.utils import reply_of
 
 pytestmark = pytest.mark.e2e
 
