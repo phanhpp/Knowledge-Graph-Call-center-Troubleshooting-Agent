@@ -1,5 +1,8 @@
-"""Procedural Executor — deterministic Step-chain traversal for almost every
-condition, with one deliberate exception for free-text interpretation.
+"""Procedural Executor —  iterates sequentially through procedure steps (Step 1, Step 2, etc.) 
+until a condition evaluates to True (finding the root cause) or reaches the end of the chain.
+
+Deterministic Step-chain traversal for almost every condition, 
+except free-text interpretation.
 
 Design decision (confirmed over Vodafone's LLM Compiler pattern): most
 Conditions are validated by one or a few *declared* API calls (see
@@ -16,15 +19,20 @@ description isn't a lookup, it's language understanding, which deterministic
 code genuinely can't do. That's the only place an LLM enters this executor,
 and the only place "Replanning" is real rather than decorative.
 
-Flow:
-    fetch_step -> route_after_fetch
-        no matching Step found  -> handle_fetch_error -> END (e.g. matched_procedure_id
-                                    was hallucinated/wrong/None — never crash on it)
-        field_check/chain_check -> evaluate_field_condition  --\\
-        ticket_text             -> interpret_ticket_condition --+--> advance_or_resolve
-                                                                       condition true                  -> resolve -> END
-                                                                       condition false, more steps     -> advance current_step_id, loop back to fetch_step
-                                                                       condition false, terminal step  -> resolve (false-branch catch-all action) -> END
+Flow (one walk):
+
+    fetch_step: load step N (starts at 1)
+      |
+      +-- step not found --------> handle_fetch_error ----------> END
+      +-- field or chain check --> evaluate_field_condition ----+
+      +-- ticket check ----------> interpret_ticket_condition --+
+                                                               |
+      +--------------------------------------------------------+
+      v
+    advance_or_resolve
+      +-- YES -------------> resolve: reply with this step's action --> END
+      +-- NO, last step ---> resolve: reply with the fallback action --> END
+      +-- NO, more steps --> step N+1: back to fetch_step
 
 State each node needs (r = reads, w = writes):
 
@@ -32,23 +40,22 @@ State each node needs (r = reads, w = writes):
                                 w: current_step_id, current_condition, action_if_true_id,
                                    action_if_false_id, next_step_id
                                    (or only `error` if the procedure has no such step)
-                                   On the first step it also empties step_trace, so the trace
-                                   always describes the latest walk.
     route_after_fetch           r: error, current_condition
-    handle_fetch_error          w: messages (the reply)
+    handle_fetch_error          r: error
+                                w: messages (the reply)
     evaluate_field_condition    r: current_condition, crm_context, current_step_id,
                                    matched_procedure_id, step_trace
     interpret_ticket_condition  w: condition_result, step_trace
     advance_or_resolve          r: condition_result, next_step_id
                                 w: current_step_id (only when it loops back to fetch_step)
     resolve                     r: condition_result, action_if_true_id, action_if_false_id,
-                                   step_trace, current_step_id (only for its error message)
-                                w: messages (the reply), step_trace (the action given is added to
-                                   the last entry); on the error path, a fallback reply and `error`
+                                   step_trace, current_step_id
+                                w: messages (the reply); on the error path, a fallback reply and `error`
 
 step_trace: one entry per step checked, {procedure_id, step_id, condition_id, description, result,
-evidence}, with `action_id` added to the last one. It records what was true at that moment, so a
-follow-up ("why did you say that?") can be answered without re-checking the customer's data.
+evidence}. It is private to the walk (not in the Supervisor's state), so it starts empty on every
+walk and is never saved. resolve turns it into the reply's checklist, which is what a follow-up
+("why did you say that?") is answered from.
 
 Redundant:
     condition_result  the same as step_trace[-1]["result"]. Kept as the direct hand-off to
@@ -56,16 +63,30 @@ Redundant:
 Every other field is read by a later node.
 """
 
+import logging
+from functools import lru_cache
 from typing import Literal, Optional
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from agent.state import ProceduralExecutorState, reply
+from agent.state import ProceduralExecutorState
 from agent.ticket_interpreter import build_ticket_interpreter_graph
+from agent.utils import reply
 from config import get_driver
+from etl.io_utils import load_json
 from mock_crm.condition_evaluator import get_condition, get_nested_field, resolve_condition
 
+# INFO: the walk's start and the action it ends with. DEBUG: every step checked, with the value it
+# used, e.g. "PROC-001 step 1: Roaming is disabled on the account -> NO (roaming_flag = True)".
+# The level is set by LOG_LEVEL (see config.setup_logging).
+logger = logging.getLogger(__name__)
+from agent.utils import reply
+
+# Locates the specified step of a procedure and 
+# fetches its condition, the next step (if any), and any actions attached to it.
+# Every step has an action for "true" (its condition answered YES). Only the last step also has one for "false"
+# collects the action outcomes and IDs into a list e.g. [{"outcome": "true", "actionId": "ACT-101"}, {"outcome": "false", "actionId": "ACT-102"}]
 FETCH_STEP_CYPHER = """
 MATCH (s:Step {procedureId: $procedure_id, stepId: $step_id})
 MATCH (s)-[:HAS_CONDITION]->(c:Condition)
@@ -78,11 +99,24 @@ RETURN c.conditionId AS conditionId,
 
 NO_ANSWER = "I couldn't produce an answer for this request."
 
+# Retrieves the instructions for a specific action and any compliance rules governing it.
+# Returns the text response to display to the consultant and a list (collect) of applicable rule IDs for auditing.
 RESOLVE_ACTION_CYPHER = """
 MATCH (a:Action {actionId: $action_id})
 OPTIONAL MATCH (a)-[:GOVERNED_BY]->(r:Rule)
 RETURN a.text AS text, collect(r.ruleId) AS ruleIds
 """
+
+
+@lru_cache(maxsize=1)
+def _procedure_names() -> dict[str, str]:
+    """procedure_id -> procedure_name, from procedures.json (lru_cache: read once, then reused)."""
+    return {p["procedure_id"]: p["procedure_name"] for p in load_json("procedures.json")}
+
+
+def procedure_name(procedure_id: str) -> str:
+    """The name of a procedure, or 'unknown' if the id is not in procedures.json."""
+    return _procedure_names().get(procedure_id, "unknown")
 
 
 def fetch_step(state: ProceduralExecutorState) -> dict:
@@ -92,13 +126,9 @@ def fetch_step(state: ProceduralExecutorState) -> dict:
 
     current_step_id defaults to 1 on the loop's first entry (nothing has set
     it yet); every subsequent call arrives with it already advanced to
-    next_step_id by advance_or_resolve's Command. That first entry also
-    empties step_trace: the Supervisor keeps the previous walk's trace in state
-    between turns, and a new walk (even one that fails right here) must not
-    inherit it.
+    next_step_id by advance_or_resolve's Command.
     """
     first_entry = state.get("current_step_id") is None
-    fresh_trace = {"step_trace": []} if first_entry else {}
     step_id = state.get("current_step_id") or 1
     driver = get_driver()
     with driver.session() as session:
@@ -109,7 +139,10 @@ def fetch_step(state: ProceduralExecutorState) -> dict:
         ).single()
 
     if record is None:
-        return {**fresh_trace, "error": f"Step {step_id} not found for procedure {state['matched_procedure_id']}"}
+        logger.warning("%s step %s: not found in Neo4j", state["matched_procedure_id"], step_id)
+        return {"error": f"Step {step_id} not found for procedure {state['matched_procedure_id']}"}
+    if first_entry:
+        logger.info("Walking %s \"%s\"", state["matched_procedure_id"], procedure_name(state["matched_procedure_id"]))
 
     action_if_true_id = None
     action_if_false_id = None
@@ -120,7 +153,6 @@ def fetch_step(state: ProceduralExecutorState) -> dict:
             action_if_false_id = a["actionId"]
 
     return {
-        **fresh_trace,
         "current_step_id": step_id,
         "current_condition": get_condition(record["conditionId"]),
         "action_if_true_id": action_if_true_id,
@@ -144,9 +176,11 @@ def route_after_fetch(state: ProceduralExecutorState) -> Literal["evaluate_field
 
 def handle_fetch_error(state: ProceduralExecutorState) -> dict:
     """Graceful terminal response when fetch_step couldn't find the current
-    step — e.g. classify_intent said 'troubleshooting' but matched_procedure_id
-    was wrong, hallucinated, or None. Returns a consultant-facing message
+    step — e.g. matched_procedure_id names a procedure that is not in the
+    graph (match_procedure only returns ids from procedures.json, so this
+    means the graph and the JSON have drifted). Returns a consultant-facing message
     instead of crashing or silently returning nothing."""
+    logger.warning("No walk: %s", state.get("error"))
     return reply(
         "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead."
     )
@@ -155,7 +189,7 @@ def handle_fetch_error(state: ProceduralExecutorState) -> dict:
 def _with_trace(state: ProceduralExecutorState, result: bool, evidence: Optional[str]) -> dict:
     """The state update for a checked step: the result, plus one more entry in `step_trace`.
 
-    `step_trace` is what a follow-up "why did you say that?" is answered from. `evidence` is the
+    resolve turns `step_trace` into the reply's checklist and the saved result. `evidence` is the
     fact the check used (for example "roaming_flag = True"), or None when there is no single value.
     """
     condition = state["current_condition"]
@@ -167,6 +201,11 @@ def _with_trace(state: ProceduralExecutorState, result: bool, evidence: Optional
         "result": result,
         "evidence": evidence,
     }
+    logger.debug(
+        "%s step %s: %s -> %s%s",
+        entry["procedure_id"], entry["step_id"], entry["description"],
+        "YES" if result else "NO", f" ({evidence})" if evidence else "",
+    )
     return {"condition_result": result, "step_trace": [*state.get("step_trace", []), entry]}
 
 
@@ -216,19 +255,51 @@ def advance_or_resolve(state: ProceduralExecutorState) -> Command[Literal["fetch
     if state["condition_result"]:
         return Command(goto="resolve")
     if state.get("next_step_id") is not None:
+        logger.debug("  -> no, go on to step %s", state["next_step_id"])
         return Command(update={"current_step_id": state["next_step_id"]}, goto="fetch_step")
     return Command(goto="resolve")
 
 
-def resolve(state: ProceduralExecutorState) -> dict:
-    """Pick the winning Action (true-branch, or the terminal false-branch
-    catch-all) and return it as the reply, citing the action and its governing Rules.
+def _check_line(entry: dict) -> str:
+    """One step as a line of the checklist: "<what was checked>: yes/no (<the value it used>)"."""
+    evidence = f" ({entry['evidence']})" if entry.get("evidence") else ""
+    return f"{entry['description']}: {'yes' if entry['result'] else 'no'}{evidence}"
 
-    Also records the action given on the last step_trace entry, so the trace says what happened
-    from the procedure to the action.
+
+def reply_text(action_text: str, trace: list[dict]) -> str:
+    """The reply the consultant reads: the action first, then why, then every step checked.
+
+    Plain code, no LLM: the action is policy text from the graph and must reach the consultant
+    word for word. The explanation comes from `trace`, which records what was actually checked.
+
+        Escalate to Tier 2 - unresolved by standard checks
+
+        Why: none of the 3 checks found the cause, so this is the procedure's fallback action.
+        Checked (PROC-001 "Customer cannot activate roaming"):
+        1. Roaming is disabled on the account: no (roaming_flag = True)
+        2. ...
+    """
+    if not trace:
+        return action_text
+    last = trace[-1]
+    if last["result"]:
+        why = f"step {last['step_id']} found the cause, so the walk stopped there."
+    else:
+        why = f"none of the {len(trace)} checks found the cause, so this is the procedure's fallback action."
+    procedure_id = last["procedure_id"]
+    lines = [action_text, "", f"Why: {why}", f"Checked ({procedure_id} \"{procedure_name(procedure_id)}\"):"]
+    lines += [f"{entry['step_id']}. {_check_line(entry)}" for entry in trace]
+    return "\n".join(lines)
+
+
+def resolve(state: ProceduralExecutorState) -> dict:
+    """Pick the winning Action (true-branch, or the terminal false-branch catch-all) and reply with
+    it, the reason, and the steps checked (see reply_text), citing the action and its governing Rules.
+    That reply, saved in `messages`, is also what explain_answer reads for a follow-up.
     """
     action_id = state["action_if_true_id"] if state["condition_result"] else state["action_if_false_id"]
     if action_id is None:
+        logger.warning("Step %s has no action for this result", state["current_step_id"])
         return {**reply(NO_ANSWER), "error": f"Terminal step {state['current_step_id']} has no action_if_false_id"}
 
     driver = get_driver()
@@ -237,9 +308,13 @@ def resolve(state: ProceduralExecutorState) -> dict:
 
     rule_ids = [r for r in record["ruleIds"] if r is not None]
     trace = state.get("step_trace", [])
-    if trace:
-        trace = [*trace[:-1], {**trace[-1], "action_id": action_id}]
-    return {**reply(record["text"], [action_id, *rule_ids]), "step_trace": trace}
+    logger.info(
+        "%s ended at step %s (%s): %s \"%s\"%s",
+        state["matched_procedure_id"], state["current_step_id"],
+        "yes, cause found" if state["condition_result"] else "no more steps, fallback",
+        action_id, record["text"], f" (rules: {', '.join(rule_ids)})" if rule_ids else "",
+    )
+    return reply(reply_text(record["text"], trace), [action_id, *rule_ids])
 
 
 def build_procedural_executor_graph():

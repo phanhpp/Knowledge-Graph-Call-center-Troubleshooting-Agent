@@ -1,41 +1,50 @@
-"""Slack front end: the /agent command (one question) and direct messages (a conversation).
+"""The Slack bot. Consultants reach the agent in two ways:
 
-Why Socket Mode: the bot dials out to Slack over a websocket, so it needs no public URL, webhook
-or tunnel and runs fine on a laptop.
+1. The /agent command, for a quick one-off question.
 
-Two ways in:
+       /agent CUST-1005 customer cannot activate roaming
 
-    /agent CUST-1005 customer cannot activate roaming
-        One question, answered privately (only the person who typed it sees the reply). No memory.
-        Slack gives a command 3 seconds to be acknowledged, so on_agent calls ack("Checking...") first.
+   Only the person who typed it sees the answer, and Slack drops the answer when the page reloads.
+   Nothing is remembered: every /agent starts from zero, so a follow-up like "why?" will not work.
 
-    a direct message to the bot
-        A conversation. The first message names the customer ("CUST-1005 customer cannot activate
-        roaming"); follow-ups need no ID ("why?", "what does that rule say?"). The conversation is
-        saved (SQLite, see config.get_checkpointer), one per DM, or one per thread inside the DM.
-        Naming a different customer starts a fresh conversation for that customer.
+2. A direct message (DM) to the bot, for a conversation.
 
-Bolt acknowledges message events by itself, then runs the handler in a background thread (a pool of
-5), so a slow answer never makes Slack retry. Two messages in the same conversation are run one at a
-time (AgentChat holds a lock per conversation).
+       CUST-1005 customer cannot activate roaming
+       why?
+       what does that rule say?
 
-Access: SLACK_ALLOWED_USERS (optional) limits both ways in to those Slack user IDs, and
-SLACK_ALLOWED_CHANNELS (optional) limits /agent to those channels. DMs work anywhere in the
-workspace, so without SLACK_ALLOWED_USERS anyone who can message the bot can look up any customer.
+   A message naming a customer ID is about that customer (the ID is checked); a message naming none
+   is a general question, or a troubleshooting follow-up for the current customer (if troubleshooting
+   has no customer yet, the agent asks which one). The conversation is saved (in SQLite, see
+   config.get_checkpointer), one per DM, or one per thread inside the DM. Naming a different customer
+   switches to them; the conversation is kept, each message stamped with its customer.
+
+How it connects: Socket Mode. The bot opens a connection to Slack itself, so it needs no public URL
+and runs on a laptop.
+
+Timing: Slack wants a reply within 3 seconds, and the agent can take longer. For /agent the bot
+answers "Checking..." at once, then replaces it with the answer. For a DM, Bolt (the Slack library)
+confirms receipt by itself and runs the handler in the background (up to 5 at a time). Messages in
+the same conversation are answered one at a time.
+
+Who can use it (all optional, set in .env):
+  SLACK_MEMBERS_CHANNEL   members of this channel may use /agent and DMs (see slack_bot/access.py).
+  SLACK_ALLOWED_USERS     these Slack user IDs may too, e.g. someone outside that channel.
+  SLACK_ALLOWED_CHANNELS  channels where /agent may be typed.
+With neither of the first two set, anyone in the workspace can DM the bot and look up any customer.
 """
 
 import logging
 import os
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from slack_bot.access import Access
 from slack_bot.chat import AgentChat
 from slack_bot.formatting import (
     ERROR_REPLY,
-    MISSING_CUSTOMER_ID,
-    MISSING_CUSTOMER_ID_DM,
     MISSING_QUESTION,
     MISSING_QUESTION_DM,
     NOT_ALLOWED,
@@ -48,31 +57,34 @@ from slack_bot.threads import thread_id_for
 
 logger = logging.getLogger(__name__)
 
-# ask(query, customer_id) -> {"answer", "citations"}: one question, no memory (used by /agent)
-Ask = Callable[[str, str], dict]
+# The function behind /agent: ask(question, customer_id) -> {"answer": text, "citations": [ids]}.
+# It runs the agent once, with no memory. Passed in (not imported) so tests can use a fake.
+Ask = Callable[[str, Optional[str]], dict]
 
-# "ephemeral" = only the person who typed the command sees the reply; "in_channel" = everyone
-# in the channel sees it, and sees the typed command too.
+# Who sees an /agent reply: "ephemeral" = only the person who typed it;
+# "in_channel" = everyone in the channel, together with the command they typed.
 REPLY_VISIBILITY = "ephemeral"
 
 
 def handle_command(
-    command: dict, respond, ask: Ask, allowed_channels: Iterable[str] = (), allowed_users: Iterable[str] = ()
+    command: dict, respond, ask: Ask, allowed_channels: Iterable[str] = (), access: Access = Access()
 ) -> None:
-    """Answer one /agent command. Every reply replaces the "Checking..." message.
+    """Answer one /agent command, replacing the "Checking..." message with the answer.
 
-    `command` is Slack's command payload (its `text` is what came after "/agent", `channel_id` is
-    where it was typed and `user_id` who typed it). `respond` posts to the command's response_url.
-    If `allowed_users` or `allowed_channels` is not empty, the command only works for those users or
-    in those channels. If the agent raises, the reply is ERROR_REPLY and the exception is logged.
+    In order: check the user (`access`) and the channel are allowed (an empty list means no limit), read the
+    customer ID (if any) and question from the text, run `ask`, and post the answer. A message with
+    an ID but no question gets a short message saying what to type instead. If the agent fails, the reply is ERROR_REPLY and the
+    error is logged.
+
+    `command` is what Slack sends: `text` (everything after "/agent"), `user_id` (who typed it) and
+    `channel_id` (where). `respond` is Slack's function for replying to that command.
     """
 
     def reply(text: str) -> None:
-        """Replace the "Checking..." message with `text`."""
+        """Show `text` in place of the "Checking..." message."""
         respond(text=text, replace_original=True, response_type=REPLY_VISIBILITY)
 
-    users = set(allowed_users)
-    if users and command.get("user_id") not in users:
+    if not access.allows(command.get("user_id")):
         reply(NOT_ALLOWED)
         return
     channels = set(allowed_channels)
@@ -81,9 +93,6 @@ def handle_command(
         return
 
     parsed = parse_message(command.get("text", ""))
-    if parsed.customer_id is None:
-        reply(MISSING_CUSTOMER_ID)
-        return
     if not parsed.query:
         reply(MISSING_QUESTION)
         return
@@ -97,42 +106,41 @@ def handle_command(
 
 
 def is_direct_message_from_user(event: dict) -> bool:
-    """True for a plain message a person typed in a direct message to the bot.
+    """True only for a new message a person typed to the bot in a DM.
 
-    Drops the bot's own posts (`bot_id`), edits and deletions (`subtype`), and anything that is not
-    a direct message, so the bot never answers itself or reacts to channel chatter.
+    Slack sends the bot other message events too. These are ignored: messages outside a DM
+    (`channel_type` is not "im" i.e. instant message in Slack), the bot's own messages (`bot_id`, so it
+    never answers itself), and edits or deletions (`subtype`).
     """
     return event.get("channel_type") == "im" and not event.get("bot_id") and not event.get("subtype")
 
 
-def handle_direct_message(event: dict, client, chat: AgentChat, allowed_users: Iterable[str] = ()) -> None:
-    """Answer one direct message as part of a saved conversation.
+def handle_direct_message(event: dict, client, chat: AgentChat, access: Access = Access()) -> None:
+    """Answer one DM as the next turn of a saved conversation.
 
-    The reply goes in the same place: the DM, or the thread inside it. The first message of a
-    conversation must name the customer. Later ones need not, because the conversation remembers it.
-    The bot posts "Checking...", runs the agent, and edits that message into the answer. If the agent
-    raises, the message becomes ERROR_REPLY and the exception is logged.
+    In order: check the user is allowed (`access`), read the customer ID and question from the text, post
+    "Checking...", run the agent with the conversation's history, then edit "Checking..." into the
+    answer. The reply goes where the message was: the DM, or the thread inside it.
+
+    A message need not name a customer: the agent asks for one only when troubleshooting needs it.
+    If the agent fails, the answer is ERROR_REPLY and the error is logged.
     """
     channel = event["channel"]
-    thread_ts = event.get("thread_ts")  # None for a top-level message in the DM
+    thread_ts = event.get("thread_ts")  # set if the message is in a thread; None if not
 
     def post(text: str):
-        """Post `text` in the DM (or its thread) and return Slack's response."""
+        """Post `text` where the message came from (the DM, or its thread); return Slack's response."""
         args = {"channel": channel, "text": text}
         if thread_ts:
             args["thread_ts"] = thread_ts
         return client.chat_postMessage(**args)
 
-    users = set(allowed_users)
-    if users and event.get("user") not in users:
+    if not access.allows(event.get("user")):
         post(NOT_ALLOWED)
         return
 
     parsed = parse_message(event.get("text", ""))
-    thread_id = thread_id_for(channel, thread_ts)
-    if parsed.customer_id is None and chat.known_customer(thread_id) is None:
-        post(MISSING_CUSTOMER_ID_DM)
-        return
+    thread_id = thread_id_for(channel, thread_ts)  # which saved conversation this message belongs to
     if not parsed.query:
         post(MISSING_QUESTION_DM)
         return
@@ -151,46 +159,49 @@ def build_app(
     ask: Ask,
     chat: AgentChat,
     allowed_channels: Iterable[str] = (),
-    allowed_users: Iterable[str] = (),
+    access: Access = Access(),
 ) -> App:
-    """Build the Bolt app with its two listeners: the /agent command, and direct messages.
+    """Create the Slack app and connect the two ways in: /agent goes to handle_command, DMs to
+    handle_direct_message.
 
-    Nothing here touches the network (the token is not checked at construction), so the wiring
-    can be built in a test. serve() checks the token explicitly.
+    Makes no network calls (the token is not checked here), so tests can build it without Slack.
+    serve() checks the token.
     """
     app = App(token=bot_token, token_verification_enabled=False)
     channels = frozenset(allowed_channels)
-    users = frozenset(allowed_users)
 
     @app.command("/agent")
     def on_agent(ack, command: dict, respond) -> None:
-        """Acknowledge within Slack's 3-second limit, then answer in the background thread."""
+        """Reply "Checking..." straight away (Slack allows 3 seconds), then work out the answer."""
         ack(WORKING)
-        handle_command(command, respond, ask, channels, users)
+        handle_command(command, respond, ask, channels, access)
 
     @app.event("message")
     def on_message(event: dict, client) -> None:
-        """A message event: answer it only if it is a person's direct message to the bot."""
+        """Slack sends every message the bot can see; answer only a person's DM to the bot."""
         if is_direct_message_from_user(event):
-            handle_direct_message(event, client, chat, users)
+            handle_direct_message(event, client, chat, access)
 
     return app
 
 
 def serve() -> None:
-    """Start the bot and keep running until stopped. Run with `uv run python -m slack_bot`.
+    """Start the bot; it runs until stopped. Run with `uv run python -m slack_bot`.
 
-    Reads SLACK_BOT_TOKEN (xoxb-...) and SLACK_APP_TOKEN (xapp-...) from the environment or .env,
-    and exits with a message if either is missing or the two are swapped. SLACK_ALLOWED_USERS and
-    SLACK_ALLOWED_CHANNELS (both optional, IDs separated by commas) limit who can use the bot and
-    where /agent works.
+    Needs two tokens in .env: SLACK_BOT_TOKEN (starts "xoxb-", lets the bot post) and SLACK_APP_TOKEN
+    (starts "xapp-", opens the Socket Mode connection). Stops with a message if either is missing or
+    they are swapped, or if Neo4j is not reachable. Reads the optional access settings: SLACK_MEMBERS_CHANNEL (one channel ID), and
+    SLACK_ALLOWED_USERS and SLACK_ALLOWED_CHANNELS (comma-separated IDs). If SLACK_MEMBERS_CHANNEL is
+    set but its members can't be read, it stops with a message instead of starting.
+
+    Builds the agent twice: one copy with no memory for /agent, and one that saves conversations
+    for DMs.
     """
     import config  # noqa: F401  (loads .env)
-    from langchain_core.messages import HumanMessage
 
-    from agent.state import reply_of
+    from agent.utils import consultant_message, reply_of
     from agent.supervisor import build_supervisor_graph
-    from config import get_checkpointer
+    from config import get_checkpointer, neo4j_unavailable_reason, setup_logging
 
     bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
     app_token = os.environ.get("SLACK_APP_TOKEN", "")
@@ -198,6 +209,9 @@ def serve() -> None:
         raise SystemExit("SLACK_BOT_TOKEN must be set and start with 'xoxb-' (see slack_bot/slack_setup.md).")
     if not app_token.startswith("xapp-"):
         raise SystemExit("SLACK_APP_TOKEN must be set and start with 'xapp-' (see slack_bot/slack_setup.md).")
+    reason = neo4j_unavailable_reason()
+    if reason:
+        raise SystemExit(f"Not starting: {reason}. Start the database in Neo4j Desktop and try again.")
 
     def id_list(name: str) -> set[str]:
         """The comma-separated IDs in an environment variable, ignoring blanks."""
@@ -205,18 +219,38 @@ def serve() -> None:
 
     channels, users = id_list("SLACK_ALLOWED_CHANNELS"), id_list("SLACK_ALLOWED_USERS")
 
-    logging.basicConfig(level=logging.INFO)
-    one_shot = build_supervisor_graph()  # /agent: no saved memory
-    checkpointer = get_checkpointer()
-    chat = AgentChat(build_supervisor_graph(checkpointer=checkpointer), checkpointer)  # DMs: saved
+    setup_logging()  # LOG_LEVEL in .env: DEBUG (default) shows each step, INFO one line per decision
+    one_shot = build_supervisor_graph()  # for /agent: no memory, each command stands alone
+    checkpointer = get_checkpointer()  # saves conversations in SQLite
+    chat = AgentChat(build_supervisor_graph(checkpointer=checkpointer), checkpointer)  # for DMs: remembers
 
-    def ask(query: str, customer_id: str) -> dict:
-        """Run one question through the graph with no memory; return the reply as {"answer", "citations"}."""
-        state = one_shot.invoke({"messages": [HumanMessage(query)], "customer_id": customer_id})
+    def ask(query: str, customer_id: Optional[str]) -> dict:
+        """Answer one /agent question from scratch (no memory of earlier commands).
+
+        customer_id is the one the command names, or None (a general question). Returns
+        {"answer": text, "citations": [ids]}, the shape format_reply expects.
+        """
+        state = one_shot.invoke({"messages": [consultant_message(query, customer_id)]})
         reply = reply_of(state)
         return {"answer": reply.text, "citations": reply.citations}
 
-    app = build_app(bot_token, ask, chat, channels, users)
+    access = Access(users, os.environ.get("SLACK_MEMBERS_CHANNEL", "").strip() or None)
+    app = build_app(bot_token, ask, chat, channels, access)
+    access.client = app.client
+    if access.members_channel:
+        try:
+            count = len(access.fetch_members())
+        except Exception as e:
+            raise SystemExit(
+                f"Could not read the members of SLACK_MEMBERS_CHANNEL={access.members_channel}: {e}. "
+                "Check the channel ID, the channels:read (or groups:read) scope, and that the bot is in the "
+                "channel (see slack_bot/slack_setup.md)."
+            )
+        print(f"Access: the {count} members of {access.members_channel}" + (f", plus {len(users)} listed users." if users else "."))
+    elif users:
+        print(f"Access: {len(users)} listed users.")
+    else:
+        print("Access: open to everyone in the workspace (set SLACK_MEMBERS_CHANNEL or SLACK_ALLOWED_USERS to limit it).")
     auth = app.client.auth_test()
     where = f"only in channel(s) {', '.join(sorted(channels))}" if channels else "in any channel"
     print(

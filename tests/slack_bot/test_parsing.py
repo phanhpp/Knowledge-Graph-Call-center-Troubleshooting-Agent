@@ -67,3 +67,11 @@ def test_a_word_that_only_contains_cust_is_not_an_id():
     """`CUSTOMER-1` and `XCUST-1005` must not be read as customer IDs."""
     assert parse_message("CUSTOMER-1 is unhappy").customer_id is None
     assert parse_message("XCUST-1005 is unhappy").customer_id is None
+
+
+def test_backticks_around_the_message_are_dropped():
+    """A message typed as Slack inline code (`...`) arrives with its backticks; they are not part of the question."""
+    assert parse_message("`CUST-1001 customer cannot activate roaming`") == (
+        "CUST-1001",
+        "customer cannot activate roaming",
+    )

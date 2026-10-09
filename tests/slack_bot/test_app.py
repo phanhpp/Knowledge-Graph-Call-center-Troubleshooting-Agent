@@ -1,7 +1,8 @@
 """Tests for slack_bot/app.py: the /agent command handler, driven by a fake `respond` and a fake agent."""
 
+from slack_bot.access import Access
 from slack_bot.app import REPLY_VISIBILITY, build_app, handle_command
-from slack_bot.formatting import ERROR_REPLY, MISSING_CUSTOMER_ID, MISSING_QUESTION, NOT_ALLOWED, WRONG_CHANNEL
+from slack_bot.formatting import ERROR_REPLY, MISSING_QUESTION, NOT_ALLOWED, WRONG_CHANNEL
 
 
 class FakeRespond:
@@ -65,24 +66,24 @@ def test_reply_replaces_the_checking_message_and_is_private():
     assert respond.replies[0]["response_type"] == REPLY_VISIBILITY == "ephemeral"
 
 
-def test_missing_customer_id_gets_an_example_and_no_agent_call():
-    """Without a customer ID the bot explains what to type, and the agent is not run."""
-    respond, ask = FakeRespond(), make_ask({"answer": "unused", "citations": []})
+def test_a_command_naming_no_customer_still_runs_the_agent():
+    """No customer ID is fine (a general question); the agent asks for one only if it needs it."""
+    respond, ask = FakeRespond(), make_ask({"answer": "The fee is waived once a year", "citations": []})
 
-    handle_command(command("customer cannot activate roaming"), respond, ask)
+    handle_command(command("what is the SIM replacement fee?"), respond, ask)
 
-    assert ask.calls == []
-    assert respond.texts == [MISSING_CUSTOMER_ID]
+    assert ask.calls == [("what is the SIM replacement fee?", None)]
+    assert respond.texts == ["The fee is waived once a year"]
 
 
-def test_bare_command_gets_the_missing_id_example():
+def test_bare_command_gets_the_missing_question_example():
     """`/agent` with nothing after it is answered with the example, not an error."""
     respond, ask = FakeRespond(), make_ask({"answer": "unused", "citations": []})
 
     handle_command(command(""), respond, ask)
 
     assert ask.calls == []
-    assert respond.texts == [MISSING_CUSTOMER_ID]
+    assert respond.texts == [MISSING_QUESTION]
 
 
 def test_missing_question_gets_an_example_and_no_agent_call():
@@ -153,7 +154,7 @@ def test_a_user_outside_the_allow_list_is_refused_without_running_the_agent():
     """Only listed users may use /agent when a list is set."""
     respond, ask = FakeRespond(), make_ask({"answer": "unused", "citations": []})
 
-    handle_command(command("CUST-1005 roaming"), respond, ask, allowed_users=["U2"])
+    handle_command(command("CUST-1005 roaming"), respond, ask, access=Access(["U2"]))
 
     assert ask.calls == []
     assert respond.texts == [NOT_ALLOWED]
@@ -163,7 +164,7 @@ def test_a_listed_user_is_answered():
     """A user on the list gets an answer."""
     respond, ask = FakeRespond(), make_ask({"answer": "ok", "citations": []})
 
-    handle_command(command("CUST-1005 roaming"), respond, ask, allowed_users=["U1"])
+    handle_command(command("CUST-1005 roaming"), respond, ask, access=Access(["U1"]))
 
     assert ask.calls
 

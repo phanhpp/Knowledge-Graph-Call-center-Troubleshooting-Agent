@@ -1,6 +1,6 @@
 """A helper for the follow-up tests: one saved conversation (one thread_id) on a compiled graph."""
 
-from langchain_core.messages import HumanMessage
+from agent.utils import consultant_message
 
 
 class Conversation:
@@ -14,12 +14,10 @@ class Conversation:
     def say(self, text: str, customer_id: str | None = None) -> dict:
         """Send one consultant message and return the final state.
 
-        Give customer_id on the first message. Later messages leave it out: it is remembered.
+        Give customer_id when the message names a customer (as the Slack bot stamps it). Leave it
+        out for a general question, or a follow-up for the current customer.
         """
-        update = {"messages": [HumanMessage(text)]}
-        if customer_id:
-            update["customer_id"] = customer_id
-        return self.graph.invoke(update, self.config)
+        return self.graph.invoke({"messages": [consultant_message(text, customer_id)]}, self.config)
 
     @property
     def saved(self) -> dict:

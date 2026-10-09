@@ -12,6 +12,7 @@ dependencies = [
     "langsmith",
     "slack-bolt>=1.21.0",
     "langgraph-checkpoint-sqlite>=3.1.1",
+    "langchain-typesafe>=0.0.1a3",
 ]
 # No deepagents — Phase 4/5 use plain LangGraph nodes, not the deepagents
 # ReAct/agent abstraction (see agent/procedural_executor.py's module

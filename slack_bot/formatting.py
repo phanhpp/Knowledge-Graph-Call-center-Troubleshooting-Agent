@@ -3,13 +3,8 @@
 import re
 
 WORKING = "Checking..."
-MISSING_CUSTOMER_ID = "Please include the customer ID, for example: `/agent CUST-1001 customer cannot activate roaming`"
 MISSING_QUESTION = "Please add your question after the customer ID, for example: `/agent CUST-1001 customer cannot activate roaming`"
 WRONG_CHANNEL = "This command can only be used in the channel set up for the Super Agent."
-MISSING_CUSTOMER_ID_DM = (
-    "Start with the customer ID, for example: `CUST-1001 customer cannot activate roaming`. "
-    "After that you can ask follow-up questions without repeating it."
-)
 MISSING_QUESTION_DM = "Please add your question after the customer ID, for example: `CUST-1001 customer cannot activate roaming`"
 NOT_ALLOWED = "You are not set up to use this bot."
 NO_ANSWER = "I couldn't produce an answer for this request."

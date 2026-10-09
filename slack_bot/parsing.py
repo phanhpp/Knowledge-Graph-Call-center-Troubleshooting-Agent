@@ -5,7 +5,7 @@ import re
 from typing import NamedTuple, Optional
 
 _CUSTOMER_ID = re.compile(r"\bCUST-\d+\b", re.IGNORECASE)
-_SEPARATORS = " :,;-–—"
+_SEPARATORS = " :,;-–—`"  # the backtick: Slack sends a message typed as `code` with its backticks
 
 
 class ParsedMessage(NamedTuple):

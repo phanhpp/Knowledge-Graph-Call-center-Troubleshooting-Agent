@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import os
 import sqlite3
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -54,6 +55,37 @@ def get_driver():
 
     cfg = get_neo4j_config()
     return GraphDatabase.driver(cfg.uri, auth=(cfg.username, cfg.password))
+
+
+def neo4j_unavailable_reason() -> Optional[str]:
+    """None if Neo4j answers; otherwise a short reason it doesn't (not running, wrong password, ...).
+
+    Asks the server for real (verify_connectivity), because creating the driver never connects.
+    """
+    try:
+        get_driver().verify_connectivity()
+    except Exception as e:  # ServiceUnavailable (not running), AuthError (bad password), ...
+        return f"cannot reach Neo4j at {get_neo4j_config().uri}: {type(e).__name__}"
+    return None
+
+
+_OWN_LOGGERS = ("agent", "slack_bot")  # this project's packages
+
+
+def setup_logging() -> None:
+    """Print log lines to the terminal: this project's at LOG_LEVEL, every library's at INFO.
+
+    LOG_LEVEL (default DEBUG) applies only to this project's own loggers. DEBUG shows everything,
+    including each procedure step and Jev's confidence numbers; INFO shows one line per decision
+    (new turn, intent, procedure, final action). Libraries (Neo4j, httpx, Slack) stay at INFO, so
+    DEBUG here doesn't flood the terminal with their internals.
+    """
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(name)s: %(message)s")
+    level = os.environ.get("LOG_LEVEL", "DEBUG").upper()
+    for name in _OWN_LOGGERS:
+        logging.getLogger(name).setLevel(level)
 
 
 @lru_cache(maxsize=1)

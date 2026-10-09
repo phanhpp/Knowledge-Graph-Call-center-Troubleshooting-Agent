@@ -1,14 +1,14 @@
 """End-to-end: questions that match no procedure, so they go to the knowledge-base search. Needs
-Neo4j (with the articles loaded by etl.load_articles, on version 5.18.1 or newer), and both
-ANTHROPIC_API_KEY and OPENAI_API_KEY."""
+Neo4j (with the articles loaded by etl.load_articles, on version 5.18.1 or newer), and
+ANTHROPIC_API_KEY, OPENAI_API_KEY and TYPESAFE_API_KEY."""
 
 import pytest
 
-from agent.state import reply_of
+from agent.utils import reply_of
 from etl.io_utils import load_json
-from tests.e2e.markers import requires_anthropic_key, requires_openai_key
+from tests.e2e.markers import requires_anthropic_key, requires_typesafe_key, requires_openai_key
 
-pytestmark = [pytest.mark.e2e, requires_anthropic_key, requires_openai_key]
+pytestmark = [pytest.mark.e2e, requires_anthropic_key, requires_openai_key, requires_typesafe_key]
 
 ARTICLE_IDS = {a["article_id"] for a in load_json("kb_articles.json")}
 RULE_IDS = {r["rule_id"] for r in load_json("rules.json")}
@@ -33,16 +33,10 @@ def test_every_citation_is_a_real_article_or_rule(ask):
         assert citation in ARTICLE_IDS | RULE_IDS, f"unknown citation {citation!r}"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TODO: classify_intent is a placeholder, and it sends this question to the 'Contract cancellation "
-        "request' procedure. Remove this marker once your own classifier routes it to the knowledge base."
-    ),
-    strict=False,
-)
 def test_a_fee_question_that_sounds_like_a_procedure_goes_to_the_knowledge_base(ask):
     """'What are the early termination fees...' asks for information, so it belongs to the knowledge
-    base, even though a 'Contract cancellation request' procedure exists."""
+    base, even though a 'Contract cancellation request' procedure exists. The old Claude classifier
+    sent it to that procedure; classify_intent (Jev) judges what the consultant wants, not the topic."""
     result = ask("What are the early termination fees if I cancel my contract?", "CUST-1001")
 
     assert result["intent"] == "open_ended"

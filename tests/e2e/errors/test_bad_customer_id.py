@@ -1,9 +1,11 @@
-"""End-to-end: a customer_id that is not in the CRM. The request must stop before any Claude call,
-so none of these tests needs an API key or Neo4j."""
+"""End-to-end: a customer ID that is not in the CRM, and troubleshooting with no customer named.
+An unknown ID must stop the request before any paid call, so those tests need no API key or Neo4j."""
 
 import pytest
 
-from agent.state import reply_of
+from agent.supervisor import WHICH_CUSTOMER
+from agent.utils import reply_of
+from tests.e2e.markers import requires_typesafe_key
 
 pytestmark = pytest.mark.e2e
 
@@ -24,7 +26,7 @@ def test_unknown_customer_is_not_reported_as_a_missing_procedure(ask):
 
 
 def test_unknown_customer_stops_before_the_intent_is_classified(ask):
-    """`intent` is never set, which shows classify_intent (a paid Claude call) was skipped."""
+    """`intent` is never set, which shows classify_intent (a paid Jev call) was skipped."""
     result = ask("Customer cannot activate roaming", "CUST-9999")
     assert "intent" not in result
 
@@ -36,8 +38,10 @@ def test_unknown_customer_also_stops_an_open_ended_question(ask):
     assert "intent" not in result
 
 
-def test_empty_customer_id_gets_the_same_clear_message(ask):
-    """An empty customer_id is handled like any other unknown ID."""
-    result = ask("Customer cannot activate roaming", "")
-    assert "couldn't find a customer" in reply_of(result).text
+@requires_typesafe_key
+def test_troubleshooting_with_no_customer_named_asks_which_one(ask):
+    """No customer named and none current: troubleshooting needs one, so the agent asks (Needs Neo4j
+    and TYPESAFE_API_KEY: the message is classified first)."""
+    result = ask("Customer cannot activate roaming", None)
+    assert reply_of(result).text == WHICH_CUSTOMER
     assert reply_of(result).citations == []

@@ -17,12 +17,12 @@
   {"action_id": "ACT-016", "text": "Issue prorated refund for the billing discrepancy", "category": "billing", "is_resolution": true},
   {"action_id": "ACT-017", "text": "Reset customer password and send temporary credentials via SMS", "category": "account_access", "is_resolution": true},
   {"action_id": "ACT-018", "text": "Issue replacement SIM card and waive the replacement fee", "category": "sim", "is_resolution": true},
-  {"action_id": "ACT-019", "text": "Confirm device is roaming-compatible; no further action needed", "category": "device", "is_resolution": true},
   {"action_id": "ACT-020", "text": "Apply loyalty discount to account per tenure eligibility", "category": "plan", "is_resolution": true},
   {"action_id": "ACT-021", "text": "Escalate to fraud team for suspicious payment activity", "category": "payment", "is_resolution": true},
   {"action_id": "ACT-022", "text": "Close ticket - condition not present, no action required", "category": "account_access", "is_resolution": true},
   {"action_id": "ACT-023", "text": "Reactivate suspended account after payment confirmation", "category": "billing", "is_resolution": true},
   {"action_id": "ACT-024", "text": "Escalate to network operations team for outage confirmation", "category": "outage", "is_resolution": true},
   {"action_id": "ACT-025", "text": "Cancel contract and waive early termination fee per goodwill policy", "category": "plan", "is_resolution": true},
-  {"action_id": "ACT-026", "text": "Inform customer any remaining device installment balance is due immediately upon cancellation", "category": "plan", "is_resolution": false}
+  {"action_id": "ACT-026", "text": "Inform customer any remaining device installment balance is due immediately upon cancellation", "category": "plan", "is_resolution": false},
+  {"action_id": "ACT-027", "text": "Explain that the device does not support the roaming bands at the customer's destination, so roaming cannot work on it; advise using a roaming-compatible device", "category": "device", "is_resolution": true}
 ]
