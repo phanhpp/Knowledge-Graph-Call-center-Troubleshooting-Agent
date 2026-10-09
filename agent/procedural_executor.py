@@ -41,23 +41,21 @@ State each node needs (r = reads, w = writes):
                                    action_if_false_id, next_step_id
                                    (or only `error` if the procedure has no such step)
     route_after_fetch           r: error, current_condition
-    handle_fetch_error          r: error, crm_context
-                                w: messages (the reply), troubleshooting_results (None for this customer)
+    handle_fetch_error          r: error
+                                w: messages (the reply)
     evaluate_field_condition    r: current_condition, crm_context, current_step_id,
                                    matched_procedure_id, step_trace
     interpret_ticket_condition  w: condition_result, step_trace
     advance_or_resolve          r: condition_result, next_step_id
                                 w: current_step_id (only when it loops back to fetch_step)
     resolve                     r: condition_result, action_if_true_id, action_if_false_id,
-                                   step_trace, crm_context, current_step_id
-                                w: messages (the reply), troubleshooting_results (this customer's
-                                   result); on the error path, a fallback reply, `error`, and None
-                                   as this customer's result
+                                   step_trace, current_step_id
+                                w: messages (the reply); on the error path, a fallback reply and `error`
 
 step_trace: one entry per step checked, {procedure_id, step_id, condition_id, description, result,
 evidence}. It is private to the walk (not in the Supervisor's state), so it starts empty on every
-walk and is never saved. resolve turns it into the reply's checklist and into the concise
-troubleshooting_results entry that a follow-up ("why did you say that?") is answered from.
+walk and is never saved. resolve turns it into the reply's checklist, which is what a follow-up
+("why did you say that?") is answered from.
 
 Redundant:
     condition_result  the same as step_trace[-1]["result"]. Kept as the direct hand-off to
@@ -183,15 +181,9 @@ def handle_fetch_error(state: ProceduralExecutorState) -> dict:
     means the graph and the JSON have drifted). Returns a consultant-facing message
     instead of crashing or silently returning nothing."""
     logger.warning("No walk: %s", state.get("error"))
-    return {
-        **reply("I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead."),
-        **_no_result(state),
-    }
-
-
-def _no_result(state: ProceduralExecutorState) -> dict:
-    """Mark this customer as having no current result, so a "why?" can't explain an older walk."""
-    return {"troubleshooting_results": {state["crm_context"]["customer_id"]: None}}
+    return reply(
+        "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead."
+    )
 
 
 def _with_trace(state: ProceduralExecutorState, result: bool, evidence: Optional[str]) -> dict:
@@ -303,18 +295,12 @@ def reply_text(action_text: str, trace: list[dict]) -> str:
 def resolve(state: ProceduralExecutorState) -> dict:
     """Pick the winning Action (true-branch, or the terminal false-branch catch-all) and reply with
     it, the reason, and the steps checked (see reply_text), citing the action and its governing Rules.
-
-    Also saves this customer's result in troubleshooting_results: the concise version of the walk
-    (procedure, action, rules, one line per step) that explain_answer reads for a follow-up.
+    That reply, saved in `messages`, is also what explain_answer reads for a follow-up.
     """
     action_id = state["action_if_true_id"] if state["condition_result"] else state["action_if_false_id"]
     if action_id is None:
         logger.warning("Step %s has no action for this result", state["current_step_id"])
-        return {
-            **reply(NO_ANSWER),
-            **_no_result(state),
-            "error": f"Terminal step {state['current_step_id']} has no action_if_false_id",
-        }
+        return {**reply(NO_ANSWER), "error": f"Terminal step {state['current_step_id']} has no action_if_false_id"}
 
     driver = get_driver()
     with driver.session() as session:
@@ -322,22 +308,13 @@ def resolve(state: ProceduralExecutorState) -> dict:
 
     rule_ids = [r for r in record["ruleIds"] if r is not None]
     trace = state.get("step_trace", [])
-    result = {
-        "procedure_id": state["matched_procedure_id"],
-        "action_id": action_id,
-        "rule_ids": rule_ids,
-        "checks": [_check_line(entry) for entry in trace],
-    }
     logger.info(
         "%s ended at step %s (%s): %s \"%s\"%s",
         state["matched_procedure_id"], state["current_step_id"],
         "yes, cause found" if state["condition_result"] else "no more steps, fallback",
         action_id, record["text"], f" (rules: {', '.join(rule_ids)})" if rule_ids else "",
     )
-    return {
-        **reply(reply_text(record["text"], trace), [action_id, *rule_ids]),
-        "troubleshooting_results": {state["crm_context"]["customer_id"]: result},
-    }
+    return reply(reply_text(record["text"], trace), [action_id, *rule_ids])
 
 
 def build_procedural_executor_graph():

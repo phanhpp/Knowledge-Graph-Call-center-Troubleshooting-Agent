@@ -2,34 +2,37 @@
 
 Flow of one turn:
 
-    START -> inject_crm --- unknown customer_id ---> handle_crm_error -> END
-                |
+    START -> check_customer --- the message names an unknown ID ---> reply "I couldn't find..." -> END
+                |                (a message naming no customer is not checked)
                 v
            check_neo4j ---- Neo4j not reachable: reply "offline" ---> END
                 |
                 v
-          classify_intent (Jev; which path, from the messages)
+          classify_intent (Jev; which path, from the latest message)
                 |
-      +---------+------------------------+------------------+
-      v                                  v                  v
-  match_procedure (Jev; which one)  graph_rag_chain    explain_answer      chosen by route(), not by the model
-      |              |                   ^                  |
-      | matched      +---- no match -----+                  |
-      v                                  |                  |
-  procedural_executor                    |                  |
-      |                                  |                  |
-      +----------------------------------+------------------+
-                                         v
-                                        END
+      +---------+------------------------------+------------------+
+      v                                        v                  v
+  load_crm: the customer's CRM record    graph_rag_chain    explain_answer      chosen by route(), not by the model
+      |  (no customer yet: reply "Which customer...?" -> END)  ^                  |
+      v                                        |                  |
+  match_procedure (Jev; which one) --- no match ---+                  |
+      | matched                                |                  |
+      v                                        |                  |
+  procedural_executor                          |                  |
+      |                                        |                  |
+      +----------------------------------------+------------------+
+                                               v
+                                              END
 
 Each path returns its reply as an AIMessage (see agent/utils.py reply()), which LangGraph adds to
 `messages`. That is the only place the answer lives; its citations are on the message.
 
 With a checkpointer and a thread_id, the state is saved between turns (see agent/state.py), which is
-what makes a follow-up work: the customer need not be repeated, Claude sees the earlier messages, and
-`explain_answer` can read the current customer's last result in `troubleshooting_results`. One
-conversation can cover several customers; `customer_id` is the one currently being discussed.
-Without a checkpointer every call stands alone.
+what makes a follow-up work: the customer need not be repeated, and `explain_answer` reads the
+earlier messages. One conversation can cover several customers and general questions. A message is
+stamped with the customer it names (by the caller, the Slack bot) or, for a troubleshooting turn,
+with the current customer (by load_crm); an unstamped message was a general question. `customer_id`
+is the current customer: the last one named. Without a checkpointer every call stands alone.
 
 Jev (TypeSafe, a classifier: typed answers with probabilities, no generated text) is called in
 classify_intent and match_procedure; it needs TYPESAFE_API_KEY. Claude is called in three places:
@@ -39,10 +42,10 @@ agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 
 import logging
 from functools import lru_cache
-from typing import Literal, Optional
+from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_typesafe import Choice, TypeSafeClassifier
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
@@ -61,10 +64,12 @@ _EXPLAIN_MODEL = "claude-sonnet-5"
 
 NOTHING_TO_EXPLAIN = "There is nothing earlier in this conversation to explain yet. Ask your question first."
 
-_ACTION_DETAILS_CYPHER = """
-MATCH (a:Action {actionId: $action_id})
-OPTIONAL MATCH (a)-[:GOVERNED_BY]->(r:Rule)
-RETURN a.text AS text, collect({id: r.ruleId, description: r.description, detail: r.detail}) AS rules
+_EXPLAIN_HISTORY = 10  # how many recent messages (all customers) explain_answer gives Claude
+
+_RULES_CYPHER = """
+MATCH (r:Rule) WHERE r.ruleId IN $ids
+RETURN r.ruleId AS id, r.description AS description, r.detail AS detail
+ORDER BY id
 """
 
 
@@ -93,39 +98,64 @@ def _procedures() -> list[dict]:
     return load_json("procedures.json")
 
 
-def inject_crm(state: SuperAgentState) -> dict:
-    """Start a turn: reset what belongs to the previous turn, then look up the customer's CRM record.
+UNKNOWN_CUSTOMER = "I couldn't find a customer with ID '{customer_id}'. Check the customer ID and try again."
+WHICH_CUSTOMER = (
+    "Which customer is this about? Start your message with their customer ID, "
+    "for example: CUST-1001 customer cannot activate roaming"
+)
 
-    A conversation is saved between turns, so the previous turn's `error` is cleared here. Otherwise
-    a stale error would send a good request to handle_crm_error. `troubleshooting_results` is
-    deliberately not cleared: it is what a follow-up explains, and a customer's next walk replaces
-    only their own entry.
 
-    An unknown customer_id does not raise: it sets `error`, and route_after_crm sends the request to
-    handle_crm_error.
+def _named_customer(state: SuperAgentState) -> Optional[str]:
+    """The customer ID the consultant's new message names, or None.
+
+    The caller (the Slack bot) finds the ID in the text and stamps it on the message as
+    `additional_kwargs["customer_id"]`; load_crm also stamps a troubleshooting message with the
+    current customer. An unstamped message names no customer: it may be a general question.
     """
-    fresh_turn = {"error": None}
     messages = state.get("messages") or []
-    logger.info("New turn for %s: %r", state["customer_id"], messages[-1].content if messages else "")
-    try:
-        crm_context = get_customer(state["customer_id"])
-    except CustomerNotFoundError:
-        logger.info("Turn stopped: no CRM record for %s", state["customer_id"])
-        return {**fresh_turn, "error": f"No CRM record found for customer_id '{state['customer_id']}'"}
-    return {**fresh_turn, "crm_context": crm_context}
+    return messages[-1].additional_kwargs.get("customer_id") if messages else None
 
 
-def route_after_crm(state: SuperAgentState) -> Literal["check_neo4j", "handle_crm_error"]:
-    """Stop early if inject_crm couldn't find the customer, before any paid call is made."""
-    return "handle_crm_error" if state.get("error") else "check_neo4j"
+def check_customer(state: SuperAgentState) -> Command[Literal["check_neo4j", "__end__"]]:
+    """Start a turn: if the new message names a customer, check the ID exists and make it current.
 
-
-def handle_crm_error(state: SuperAgentState) -> dict:
-    """End the request with a clear message when the customer_id isn't in the CRM.
-
-    `error` stays set, so a caller can tell this apart from a normal answer.
+    A message without an ID is not checked: it may be a general question, which needs no customer.
+    The CRM record itself is loaded later, and only for troubleshooting (load_crm). This runs before
+    any paid call, so a wrong ID costs nothing. It also clears the previous turn's `error`, since
+    the state is saved between turns.
     """
-    return reply(f"I couldn't find a customer with ID '{state['customer_id']}'. Check the customer ID and try again.")
+    named = _named_customer(state)
+    logger.info("New turn%s: %r", f" for {named}" if named else " (no customer named)", state["messages"][-1].content)
+    if named is None:
+        return Command(update={"error": None}, goto="check_neo4j")
+    try:
+        get_customer(named)
+    except CustomerNotFoundError:
+        logger.info("Turn stopped: no CRM record for %s", named)
+        return Command(
+            update={**reply(UNKNOWN_CUSTOMER.format(customer_id=named)), "error": f"No CRM record found for customer_id '{named}'"},
+            goto=END,
+        )
+    return Command(update={"error": None, "customer_id": named}, goto="check_neo4j")
+
+
+def load_crm(state: SuperAgentState) -> Command[Literal["match_procedure", "__end__"]]:
+    """Troubleshooting only: load the current customer's CRM record, which the walk checks.
+
+    With no customer named yet in this conversation, it asks for one instead: troubleshooting
+    always needs a customer. A message that named no customer but follows up the current one
+    ("she is abroad now") is stamped with that customer here, so the history shows whose walk it was.
+    """
+    customer_id = state.get("customer_id")
+    if not customer_id:
+        logger.info("Turn stopped: troubleshooting with no customer named")
+        return Command(update={**reply(WHICH_CUSTOMER), "error": "No customer named for troubleshooting"}, goto=END)
+    update = {"crm_context": get_customer(customer_id)}
+    latest = state["messages"][-1]
+    if not latest.additional_kwargs.get("customer_id"):
+        stamped = {**latest.additional_kwargs, "customer_id": customer_id}
+        update["messages"] = [latest.model_copy(update={"additional_kwargs": stamped})]
+    return Command(update=update, goto="match_procedure")
 
 
 NEO4J_DOWN = (
@@ -263,10 +293,10 @@ def match_procedure(state: SuperAgentState) -> dict:
     return {"matched_procedure_id": pick.choice}
 
 
-def route(state: SuperAgentState) -> Literal["match_procedure", "explain_answer", "graph_rag_chain"]:
+def route(state: SuperAgentState) -> Literal["load_crm", "explain_answer", "graph_rag_chain"]:
     """Deterministic routing off the already-classified intent (not LLM-guessed here)."""
     if state["intent"] == "troubleshooting":
-        return "match_procedure"
+        return "load_crm"
     if state["intent"] == "explain":
         return "explain_answer"
     return "graph_rag_chain"
@@ -277,73 +307,97 @@ def route_after_match(state: SuperAgentState) -> Literal["procedural_executor", 
     return "procedural_executor" if state.get("matched_procedure_id") else "graph_rag_chain"
 
 
-def _walk_facts(result: Optional[dict]) -> tuple[str, list[str]]:
-    """Turn one customer's last troubleshooting result into facts explain_answer can give Claude, so
-    a follow-up like "why?" is answered from what actually happened, not from Claude's guess.
+def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
+    """The last `limit` messages, each labelled with its customer, for explain_answer's prompt.
 
-    `result` is that customer's entry in `troubleshooting_results`, written by the walk's resolve:
-    {"procedure_id", "action_id", "rule_ids", "checks": ["<step>: yes/no (<value>)", ...]}. It holds
-    only IDs for the action and rules, so their wording is looked up in Neo4j here.
+    Consultant messages become "[CUST-1001] <text>" and replies "[reply about CUST-1001] <text>",
+    a reply belonging to the consultant message before it. A message stamped with no customer was a
+    general question: "[general] <text>" and "[reply, general] <text>". A reply's citations are added as
+    "Sources: ..." (Claude does not see `additional_kwargs`). The window starts on a consultant
+    message, which Claude requires. The saved messages are not changed.
 
-    Returns (facts, cited):
-      facts  plain text for Claude's prompt, e.g.
-               Procedure PROC-001 ("Customer cannot activate roaming"). Steps checked, in order:
-               - Roaming is disabled on the account: no (roaming_flag = True)
-               ...
-               Action given: ACT-015 "Escalate to Tier 2 ..."
-               Rules governing it:
-               - R012: ...
-      cited  the IDs the explanation cites: the action, then its rules, e.g. ["ACT-015", "R012"]
-
-    Returns ("", []) when the customer has no result (no walk yet, or their last walk failed).
+    Returns (the labelled messages, every ID the replies in the window cite).
     """
-    if not result:
-        return "", []
-    lines = [f"Procedure {result['procedure_id']} (\"{procedure_name(result['procedure_id'])}\"). Steps checked, in order:"]
-    lines += [f"- {check}" for check in result["checks"]]
+    window = messages[-limit:]
+    while window and window[0].type != "human":
+        window = window[1:]
+    labelled, cited = [], []
+    customer = None
+    for message in window:
+        if message.type == "human":
+            customer = message.additional_kwargs.get("customer_id")
+            labelled.append(HumanMessage(f"[{customer or 'general'}] {message.content}"))
+        else:
+            citations = list(message.additional_kwargs.get("citations", []))
+            sources = f"\n\nSources: {', '.join(citations)}" if citations else ""
+            label = f"reply about {customer}" if customer else "reply, general"
+            labelled.append(AIMessage(f"[{label}] {message.content}{sources}"))
+            cited += [c for c in citations if c not in cited]
+    return labelled, cited
 
-    action_id = result["action_id"]
+
+def _rule_wording(ids: list[str]) -> str:
+    """The wording of every rule among `ids` (the IDs cited in the conversation), from Neo4j.
+
+    Replies carry rule IDs only (e.g. "Sources: ACT-015, R012"), so "what does that rule say?"
+    needs the text looked up. Non-rule IDs (actions, articles) simply match nothing.
+    """
+    if not ids:
+        return ""
     with get_driver().session() as session:
-        record = session.run(_ACTION_DETAILS_CYPHER, action_id=action_id).single()
-    rules = [r for r in record["rules"] if r["id"]]
-    lines.append(f"Action given: {action_id} \"{record['text']}\"")
-    if rules:
-        lines.append("Rules governing it:")
-        lines += [f"- {r['id']}: {r['description']}. {r['detail']}" for r in rules]
-    else:
-        lines.append("Rules governing it: none")  # said outright, so Claude can't pass a step off as a rule
-    return "\n".join(lines), [action_id, *(r["id"] for r in rules)]
+        rows = session.run(_RULES_CYPHER, ids=ids).data()
+    return "\n".join(f"- {r['id']}: {r['description']}. {r['detail']}" for r in rows)
 
 
 def explain_answer(state: SuperAgentState) -> dict:
-    """Answer a follow-up about an earlier answer ("why?", "what does R012 say?").
+    """Answer a follow-up about an earlier answer ("why?", "what does R012 say?"), from the
+    conversation itself.
 
-    Claude gets the conversation plus facts gathered in plain code about the CURRENT customer only:
-    their last troubleshooting result (from `troubleshooting_results`) and the wording of its action
-    and rules, from Neo4j. A conversation can cover several customers, so the prompt names the
-    customer and the facts never include another customer's walk. Claude answers from those only,
-    and says so if they do not contain the answer. With no earlier message it returns
-    NOTHING_TO_EXPLAIN without calling Claude.
+    Claude gets the last _EXPLAIN_HISTORY messages, each labelled with the customer it was about, or
+    as general (see _explain_history), so it can follow a conversation that moves between customers
+    and general questions. A troubleshooting reply already holds everything a "why?" needs: the
+    action, why the walk stopped, and every step checked with its value. The only thing added is the
+    wording of the rules those messages cite, from Neo4j.
 
-    The reply cites the action and rules behind that customer's last walk.
+    If the question names a customer, Claude answers only about that customer's messages. If it
+    names none, Claude answers about the earlier answer it refers to, usually the latest one: no
+    customer is forced on it. Either way it is told never to claim an earlier answer was wrong.
+    With no earlier message it returns NOTHING_TO_EXPLAIN without calling Claude.
+
+    The reply cites nothing: an explanation is not a new source, and the answer it explains
+    already showed its sources.
     """
     if len(state["messages"]) < 2:
         return reply(NOTHING_TO_EXPLAIN)
 
-    customer_id = state["customer_id"]
-    facts, cited = _walk_facts(state.get("troubleshooting_results", {}).get(customer_id))
+    named = _named_customer(state)
+    if named:
+        focus = (
+            f"The question is about customer {named}: answer only from {named}'s messages, and never "
+            f"take a reply about another customer, or a general reply, as one about {named}."
+        )
+    else:
+        focus = (
+            "The question names no customer: answer about the earlier answer it refers to, usually "
+            "the most recent one."
+        )
+    history, cited = _explain_history(state["messages"], _EXPLAIN_HISTORY)
+    rules = _rule_wording(cited)
     system = SystemMessage(
         "You are helping a call-centre consultant. They are asking a follow-up question about an "
-        f"earlier answer for customer {customer_id}. The conversation may also mention other "
-        f"customers; answer only about {customer_id}. Answer from the conversation and the facts "
-        "below ONLY. If they do not contain the answer, say so plainly. Be brief. A rule is a business "
-        "policy governing the action, listed under 'Rules governing it'; a step's condition is a check, "
-        "not a rule. If no rule governs the action, say so plainly; never call anything else a rule.\n\n"
-        f"Facts about {customer_id}'s last procedure walk:\n{facts or '(no procedure was run for this customer)'}"
+        "earlier answer. The conversation below can cover several customers and general questions: "
+        "each consultant message starts with the customer ID it was about, or [general], and each "
+        "reply starts with '[reply about <customer ID>]' or '[reply, general]'. "
+        f"{focus} Answer from the conversation and the rule wording below ONLY; if they do not "
+        "contain the answer, say so plainly, and never guess or claim an earlier answer was wrong. "
+        "Be brief. A rule is a business policy governing an action, listed below; a step's "
+        "condition is a check, not a rule. If no rule governs the action, say so plainly; never call "
+        "anything else a rule.\n\n"
+        f"Rules cited in the conversation:\n{rules or '(none)'}"
     )
     llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"})
-    response = llm.invoke([system, *state["messages"]])
-    return reply(str(response.text), cited)
+    response = llm.invoke([system, *history])
+    return reply(str(response.text))
 
 
 def build_supervisor_graph(checkpointer=None):
@@ -353,26 +407,20 @@ def build_supervisor_graph(checkpointer=None):
     each call a `thread_id` in its config. Without one, every call stands alone.
     """
     builder = StateGraph(SuperAgentState)
-    builder.add_node("inject_crm", inject_crm)
-    builder.add_node("handle_crm_error", handle_crm_error)
-    builder.add_node("check_neo4j", check_neo4j)  # routes itself (returns a Command)
+    builder.add_node("check_customer", check_customer)  # routes itself (returns a Command)
+    builder.add_node("check_neo4j", check_neo4j)  # routes itself
     builder.add_node("classify_intent", classify_intent)
+    builder.add_node("load_crm", load_crm)  # routes itself
     builder.add_node("match_procedure", match_procedure)
     builder.add_node("procedural_executor", build_procedural_executor_graph())
     builder.add_node("graph_rag_chain", graph_rag_chain)
     builder.add_node("explain_answer", explain_answer)
 
-    builder.add_edge(START, "inject_crm")
-    builder.add_conditional_edges(
-        "inject_crm",
-        route_after_crm,
-        ["check_neo4j", "handle_crm_error"],
-    )
-    builder.add_edge("handle_crm_error", END)
+    builder.add_edge(START, "check_customer")
     builder.add_conditional_edges(
         "classify_intent",
         route,
-        ["match_procedure", "explain_answer", "graph_rag_chain"],
+        ["load_crm", "explain_answer", "graph_rag_chain"],
     )
     builder.add_conditional_edges(
         "match_procedure",

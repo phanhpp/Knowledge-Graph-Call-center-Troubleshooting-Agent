@@ -26,7 +26,7 @@ def test_follow_up_asks_what_a_cited_rule_says(after_the_walk):
 
     assert result["intent"] == "explain"
     assert "summary" in reply_of(result).text.lower()
-    assert reply_of(result).citations == ["ACT-015", "R012"]
+    assert reply_of(result).citations == []  # an explanation cites nothing
 
 
 def test_follow_up_asks_why_the_walk_ended_where_it_did(after_the_walk):

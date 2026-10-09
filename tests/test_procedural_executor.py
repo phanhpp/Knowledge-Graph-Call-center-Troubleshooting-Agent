@@ -139,27 +139,6 @@ def test_trace_records_a_yes_result():
     assert trace[0]["evidence"] == "roaming_flag = False"
 
 
-# --- troubleshooting_results: the concise result saved for follow-ups ---
-
-
-def test_result_is_saved_for_the_customer_concisely():
-    """The walk saves one entry, keyed by customer: procedure, action, rules, one line per step."""
-    results = run("PROC-001", "CUST-1001")["troubleshooting_results"]
-
-    assert results == {
-        "CUST-1001": {
-            "procedure_id": "PROC-001",
-            "action_id": "ACT-015",
-            "rule_ids": ["R012"],
-            "checks": [
-                "Roaming is disabled on the account: no (roaming_flag = True)",
-                "Customer's plan is inactive: no (plan_status = active)",
-                "Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)",
-            ],
-        }
-    }
-
-
 def test_chain_condition_trace_has_no_single_evidence():
     """A chain condition reads several values, so its trace entry has evidence None."""
     trace = run("PROC-016", "CUST-1001")["step_trace"]
@@ -168,30 +147,13 @@ def test_chain_condition_trace_has_no_single_evidence():
     assert trace[0]["evidence"] is None
 
 
-def test_a_new_walk_replaces_only_its_own_customers_result():
-    """Results arrive holding other customers' entries (one conversation, several customers). A walk
-    replaces its own customer's entry and leaves the others alone."""
-    earlier = {"CUST-1002": {"procedure_id": "PROC-999"}, "CUST-1005": {"procedure_id": "PROC-014"}}
-
-    result = GRAPH.invoke(
-        {"matched_procedure_id": "PROC-001", "crm_context": get_customer("CUST-1002"), "troubleshooting_results": earlier}
-    )
-
-    assert result["troubleshooting_results"]["CUST-1002"]["action_id"] == "ACT-001"
-    assert result["troubleshooting_results"]["CUST-1005"] == {"procedure_id": "PROC-014"}
-
-
-def test_a_failed_walk_clears_that_customers_result():
-    """A walk that finds no such procedure leaves None for its customer, so a 'why?' afterwards can't
-    explain an older answer as if it were this one."""
-    earlier = {"CUST-1002": {"procedure_id": "PROC-001"}}
-
-    result = GRAPH.invoke(
-        {"matched_procedure_id": "PROC-999", "crm_context": get_customer("CUST-1002"), "troubleshooting_results": earlier}
-    )
+def test_a_failed_walk_replies_and_sets_error():
+    """A procedure that isn't in the graph gives a consultant-facing reply and an error, no crash."""
+    result = GRAPH.invoke({"matched_procedure_id": "PROC-999", "crm_context": get_customer("CUST-1002")})
 
     assert result["error"]
-    assert result["troubleshooting_results"] == {"CUST-1002": None}
+    assert "couldn't find a matching procedure" in reply_of(result).text
+    assert reply_of(result).citations == []
 
 
 # --- ticket_text: PROC-017/019/004 — genuinely calls an LLM ---

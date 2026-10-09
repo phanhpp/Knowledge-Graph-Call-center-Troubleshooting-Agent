@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.e2e, requires_anthropic_key, requires_typesafe_key]
 
 def test_a_new_problem_for_the_same_customer_needs_no_id(chat_graph):
     """After one walk, a different problem is sent with no customer ID. It runs its own procedure
-    and the customer's saved result now describes that walk."""
+    and its reply is that procedure's action."""
     chat = Conversation(chat_graph, "new-problem")
     chat.say("Customer cannot activate roaming", customer_id="CUST-1001")
 
@@ -20,7 +20,7 @@ def test_a_new_problem_for_the_same_customer_needs_no_id(chat_graph):
 
     assert result["intent"] == "troubleshooting"
     assert result["matched_procedure_id"] == "PROC-016"
-    assert chat.saved["troubleshooting_results"]["CUST-1001"]["procedure_id"] == "PROC-016"
+    assert reply_of(result).citations[0] == "ACT-006"  # PROC-016's outage action, for CUST-1001's ZIP
     assert chat.saved["customer_id"] == "CUST-1001"
 
 
@@ -47,8 +47,8 @@ def test_two_conversations_do_not_mix(chat_graph):
     assert a.saved["customer_id"] == "CUST-1001"
     assert b.saved["customer_id"] == "CUST-1002"
     assert len(a.saved["messages"]) == len(b.saved["messages"]) == 2
-    assert a.saved["troubleshooting_results"]["CUST-1001"]["action_id"] == "ACT-015"
-    assert b.saved["troubleshooting_results"]["CUST-1002"]["action_id"] == "ACT-001"
+    assert a.saved["messages"][-1].additional_kwargs["citations"][0] == "ACT-015"
+    assert b.saved["messages"][-1].additional_kwargs["citations"][0] == "ACT-001"
 
 
 def test_each_turn_adds_exactly_one_reply_with_its_citations(chat_graph):

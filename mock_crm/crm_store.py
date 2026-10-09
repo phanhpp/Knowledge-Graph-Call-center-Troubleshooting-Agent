@@ -1,8 +1,9 @@
 """Mock CRM — JSON-file-backed customer lookup by customer_id.
 
-Loaded once and cached; this is the "CRM injection" data source the
-Supervisor's inject_crm() node and the Procedural Executor's condition
-evaluator both read from.
+Loaded once and cached; this is the "CRM injection" data source. The
+Supervisor's check_customer() node uses it to check that a named ID exists,
+and load_crm() (troubleshooting only) loads the record the Procedural
+Executor's condition evaluator reads from.
 """
 
 from functools import lru_cache
