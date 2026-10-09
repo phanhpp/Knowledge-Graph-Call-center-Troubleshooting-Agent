@@ -43,7 +43,7 @@ from typing import Literal, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage
-from langchain_typesafe import Choice, Noul, NoulCriteria, TypeSafeClassifier
+from langchain_typesafe import Choice, TypeSafeClassifier
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
@@ -70,8 +70,7 @@ RETURN a.text AS text, collect({id: r.ruleId, description: r.description, detail
 
 # Thresholds for Jev's answers. Starting values: tune them on a labelled set of messages. Kept
 # cautious on purpose, since walking the wrong procedure does more harm than a KB answer.
-_MIN_PATH_CONFIDENCE = 0.5  # below this, a troubleshooting pick becomes open_ended
-_MIN_OWN_SITUATION = 0.5  # below this probability, a troubleshooting pick becomes open_ended
+_MIN_TROUBLESHOOTING_PROBABILITY = 0.5  # below this, a troubleshooting pick becomes open_ended
 _MIN_PROCEDURE_CONFIDENCE = 0.5  # below this, no procedure is walked
 
 _NO_PROCEDURE = "none"
@@ -150,25 +149,35 @@ def check_neo4j(state: SuperAgentState) -> Command[Literal["classify_intent", "_
     return Command(goto="classify_intent")
 
 
-def classify_intent(state: SuperAgentState) -> dict:
-    """Decide which path the consultant's latest message takes, by asking Jev two questions at once.
+def _latest_message(state: SuperAgentState):
+    """The consultant's new message: the last one in `messages` when a turn starts.
 
-    Both questions are judged on what the consultant wants done, not on the topic: most procedures
-    have a KB article on the same topic (cancellation, SIM replacement, outage credit). The procedure
-    list is deliberately not shown here; seeing "Contract cancellation request" is what made the old
+    The two Jev calls are given only this, not the whole conversation. Measured live, the latest
+    message classifies as well on its own, and it keeps earlier customers' messages (one conversation
+    can cover several) and an ever-growing history out of each call.
+    """
+    return state["messages"][-1]
+
+
+def classify_intent(state: SuperAgentState) -> dict:
+    """Decide which path the consultant's latest message takes, with one Jev Choice.
+
+    It is judged on what the consultant wants done, not on the topic: most procedures have a KB
+    article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is
+    deliberately not shown here; seeing "Contract cancellation request" is what made the old
     classifier send a fee question to that procedure. match_procedure picks the procedure later.
 
     Returns {"intent": ..., "matched_procedure_id": None}. The id is cleared every turn (the state is
     saved between turns), and only match_procedure sets it.
     """
     response = _classifier().invoke({
-        "state": state["messages"],  # the whole conversation; the last message is the new one
+        "state": _latest_message(state),
         "questions": {
-            # Question 1, a Choice: pick one label. Jev returns the label and a confidence (0 to 1).
+            # A Choice: Jev picks one label and returns a probability for every label.
             "path": Choice(
                 instructions=(
                     "A call-centre consultant is talking to an assistant while handling a customer. "
-                    "Classify the consultant's LATEST message by what they want done, not by its topic: "
+                    "Classify the consultant's message by what they want done, not by its topic: "
                     "most topics (cancellation, roaming, SIM cards, refunds, outages) come up both as a "
                     "customer's problem and as a general question."
                 ),
@@ -185,38 +194,31 @@ def classify_intent(state: SuperAgentState) -> dict:
                         "customer, even when the topic matches a common customer problem."
                     ),
                     "explain": (
-                        "The consultant asks about the assistant's previous answer in this conversation: "
-                        "why it was given, what a step, action or cited rule means, or where it came from."
+                        "The consultant asks about an earlier answer from the assistant: why it was "
+                        "given, what a step, action or cited rule means, or where it came from."
                     ),
                 },
             ),
-            # Question 2, a Noul: a yes/no question. Jev returns the probability of yes (0 to 1).
-            # It asks the one thing the fee bug hinges on, on its own, as a second check on
-            # "troubleshooting".
-            "own_situation": Noul(
-                instructions=(
-                    "Is the consultant's latest message about this particular customer's own situation, "
-                    "so that the right answer depends on this customer's account?"
-                ),
-                criteria=NoulCriteria(
-                    true="The customer has a problem or request of their own that the consultant is handling now.",
-                    false="A general question whose answer is the same for every customer, such as a fee, rate or policy.",
-                ),
-            ),
         },
     })
-    path = response.choices["path"]  # e.g. path.choice = "troubleshooting", path.confidence = 0.92
-    own_situation = response.nouls["own_situation"].noul  # e.g. 0.87
+    path = response.choices["path"]  # e.g. path.choice = "troubleshooting"
+    # The chosen label's probability, e.g. {"troubleshooting": 0.96, "open_ended": 0.03, "explain": 0.01}.
+    # Used instead of path.confidence, which measures how concentrated the whole distribution is.
+    troubleshooting_probability = path.probabilities.get("troubleshooting", 0.0)
 
     intent = path.choice
-    # Troubleshooting must pass both checks; when unsure, answer from the knowledge base instead.
-    if intent == "troubleshooting" and (path.confidence < _MIN_PATH_CONFIDENCE or own_situation < _MIN_OWN_SITUATION):
+    # When unsure, answer from the knowledge base instead of walking a procedure.
+    if intent == "troubleshooting" and troubleshooting_probability < _MIN_TROUBLESHOOTING_PROBABILITY:
         intent = "open_ended"
-    # There is nothing to explain on the first message.
+    # There is nothing to explain on the first message. Checked on the saved conversation, which Jev
+    # doesn't see.
     if intent == "explain" and len(state["messages"]) < 2:
         intent = "open_ended"
     logger.info("Intent: %s", intent)
-    logger.debug("  Jev: path=%s (confidence %.2f), own_situation=%.2f", path.choice, path.confidence, own_situation)
+    logger.debug(
+        "  Jev: path=%s, probabilities %s",
+        path.choice, {label: round(p, 2) for label, p in path.probabilities.items()},
+    )
     return {"intent": intent, "matched_procedure_id": None}
 
 
@@ -238,14 +240,14 @@ def match_procedure(state: SuperAgentState) -> dict:
     criteria[_NO_PROCEDURE] = "None of these procedures fits the situation described."
 
     response = _classifier().invoke({
-        "state": state["messages"],
+        "state": _latest_message(state),
         "questions": {
             # A Choice: Jev returns one procedure id (or "none") and a confidence (0 to 1).
             "procedure": Choice(
                 instructions=(
                     "A call-centre consultant is handling a customer's problem or request. Which "
-                    "troubleshooting procedure fits the situation described in the conversation? Match "
-                    "the specific symptom or request, not just the topic."
+                    "troubleshooting procedure fits the situation described in the consultant's message? "
+                    "Match the specific symptom or request, not just the topic."
                 ),
                 criteria=criteria,
             ),

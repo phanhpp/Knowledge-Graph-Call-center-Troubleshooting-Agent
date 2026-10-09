@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_typesafe import ChoiceAnswer, ClassifierResponse, NoulAnswer
+from langchain_typesafe import ChoiceAnswer, ClassifierResponse
 from langgraph.graph import END
 
 from agent.procedural_executor import build_procedural_executor_graph
@@ -74,14 +74,9 @@ def use_jev(monkeypatch, **answers) -> FakeJev:
     return fake
 
 
-def choice(label: str, confidence: float = 0.9) -> ChoiceAnswer:
-    """A Choice answer picking `label` with the given confidence."""
-    return ChoiceAnswer(type="choice", choice=label, probabilities={label: confidence}, confidence=confidence)
-
-
-def noul(probability: float) -> NoulAnswer:
-    """A Noul answer: the probability of yes."""
-    return NoulAnswer(type="noul", noul=probability)
+def choice(label: str, probability: float = 0.9) -> ChoiceAnswer:
+    """A Choice answer picking `label`, with that probability (and the same confidence)."""
+    return ChoiceAnswer(type="choice", choice=label, probabilities={label: probability}, confidence=probability)
 
 
 def conversation(*texts):
@@ -226,50 +221,54 @@ def test_unknown_customer_is_answered_in_the_messages_without_calling_claude():
 # --- classify_intent, with a fake Jev ---
 
 
-def test_classify_shows_jev_the_whole_conversation_but_not_the_procedures(monkeypatch):
-    """Jev classifies every message, and the procedure list is not part of the path question."""
-    fake = use_jev(monkeypatch, path=choice("open_ended"), own_situation=noul(0.1))
+def test_classify_shows_jev_only_the_latest_message_and_not_the_procedures(monkeypatch):
+    """Jev is given the new message only (not the conversation), and no procedure list."""
+    fake = use_jev(monkeypatch, path=choice("open_ended"))
     messages = conversation("roaming", "Escalate", "why?")
 
     classify_intent({"messages": messages, "customer_id": "CUST-1005"})
 
     request = fake.requests[0]
-    assert request["state"] == messages
+    assert request["state"] == messages[-1]
+    assert list(request["questions"]) == ["path"]
     assert "PROC-" not in str(request["questions"])
 
 
 def test_classify_confident_troubleshooting_leaves_the_procedure_to_match_procedure(monkeypatch):
     """A confident troubleshooting answer stands, with no procedure picked yet."""
-    use_jev(monkeypatch, path=choice("troubleshooting", 0.9), own_situation=noul(0.9))
+    use_jev(monkeypatch, path=choice("troubleshooting", 0.9))
 
     result = classify_intent({"messages": conversation("no signal at home"), "customer_id": "CUST-1005"})
 
     assert result == {"intent": "troubleshooting", "matched_procedure_id": None}
 
 
-def test_classify_troubleshooting_with_low_confidence_becomes_open_ended(monkeypatch):
+def test_classify_troubleshooting_with_low_probability_becomes_open_ended(monkeypatch):
     """When Jev is unsure of the path, the message goes to the knowledge base, not a walk."""
-    use_jev(monkeypatch, path=choice("troubleshooting", 0.3), own_situation=noul(0.9))
+    use_jev(monkeypatch, path=choice("troubleshooting", 0.3))
 
     result = classify_intent({"messages": conversation("cancel?"), "customer_id": "CUST-1005"})
 
     assert result["intent"] == "open_ended"
 
 
-def test_classify_troubleshooting_about_no_one_in_particular_becomes_open_ended(monkeypatch):
-    """A general question (the fee case) is open_ended even if the path answer said troubleshooting."""
-    use_jev(monkeypatch, path=choice("troubleshooting", 0.9), own_situation=noul(0.2))
-
-    result = classify_intent(
-        {"messages": conversation("What are the early termination fees if I cancel my contract?"), "customer_id": "CUST-1001"}
+def test_classify_threshold_uses_the_troubleshooting_probability_not_confidence(monkeypatch):
+    """Confidence measures how concentrated the distribution is; the decision uses the chosen
+    label's probability. Here confidence is high but troubleshooting is only 40% likely."""
+    spread = ChoiceAnswer(
+        type="choice", choice="troubleshooting", confidence=0.9,
+        probabilities={"troubleshooting": 0.4, "open_ended": 0.35, "explain": 0.25},
     )
+    use_jev(monkeypatch, path=spread)
+
+    result = classify_intent({"messages": conversation("cancel?"), "customer_id": "CUST-1001"})
 
     assert result["intent"] == "open_ended"
 
 
 def test_classify_clears_a_procedure_from_an_earlier_turn(monkeypatch):
     """matched_procedure_id is reset every turn; only match_procedure sets it."""
-    use_jev(monkeypatch, path=choice("explain"), own_situation=noul(0.5))
+    use_jev(monkeypatch, path=choice("explain"))
 
     result = classify_intent(
         {"messages": conversation("roaming", "Escalate", "why?"), "customer_id": "CUST-1005", "matched_procedure_id": "PROC-001"}
@@ -280,7 +279,7 @@ def test_classify_clears_a_procedure_from_an_earlier_turn(monkeypatch):
 
 def test_classify_explain_on_a_first_message_becomes_open_ended(monkeypatch):
     """'explain' when nothing came before is corrected in code."""
-    use_jev(monkeypatch, path=choice("explain"), own_situation=noul(0.5))
+    use_jev(monkeypatch, path=choice("explain"))
 
     result = classify_intent({"messages": conversation("what does R012 say?"), "customer_id": "CUST-1005"})
 
@@ -289,7 +288,7 @@ def test_classify_explain_on_a_first_message_becomes_open_ended(monkeypatch):
 
 def test_classify_explain_is_allowed_after_an_earlier_answer(monkeypatch):
     """With an earlier exchange, 'explain' stands."""
-    use_jev(monkeypatch, path=choice("explain"), own_situation=noul(0.5))
+    use_jev(monkeypatch, path=choice("explain"))
 
     result = classify_intent({"messages": conversation("roaming", "Escalate", "why?"), "customer_id": "CUST-1005"})
 
@@ -303,8 +302,10 @@ def test_match_offers_every_procedure_with_when_to_use_and_a_none_option(monkeyp
     """Each procedure is an option described by its name and when_to_use, and "none" is an option."""
     fake = use_jev(monkeypatch, procedure=choice("PROC-016"))
 
-    match_procedure({"messages": conversation("no signal at home"), "customer_id": "CUST-1005"})
+    messages = conversation("roaming", "Escalate", "no signal at home")
+    match_procedure({"messages": messages, "customer_id": "CUST-1005"})
 
+    assert fake.requests[0]["state"] == messages[-1]  # the new message only
     options = fake.requests[0]["questions"]["procedure"].criteria
     assert {f"PROC-{n:03d}" for n in range(1, 21)} | {"none"} == set(options)
     assert "PROC-017" in options["PROC-016"]  # when_to_use names its neighbour
