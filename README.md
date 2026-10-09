@@ -1,4 +1,4 @@
-# Super Agent (Vodafone Clone) — Knowledge-Graph Copilot
+# Super Agent (Vodafone Clone) - Knowledge-Graph Copilot
 
 ## Overview
 
@@ -10,6 +10,8 @@ Super Agent is a clone of Vodafone’s enterprise copilot for call-center consul
 - Intent Classification & Matching: Uses custom classifiers (*Jev*) for request intent routing and matching queries against 20 operational procedures.
 - Slack Frontend: Provides real-time interactive communication via Slack WebSocket (Socket Mode).
 - GraphRAG Engine with Hybrid Search & Graph Grounding: Performs dense vector and sparse keyword search over policy articles, then traverses Neo4j graph relationships to attach the governing rules (`(Article)-[:CITES_RULE]->(Rule)`).
+
+
 
 ## The design
 
@@ -31,11 +33,12 @@ Super Agent is a clone of Vodafone’s enterprise copilot for call-center consul
 **Answer** (every request). "Claude", "OpenAI" and "Jev" (TypeSafe's classifier) mark the model calls:
 
 ```
-  consultant: message + customer_id
+  consultant: message (+ customer ID, if it names one)
                       |
                       v
-inject_crm: load customer's record (mock_crm/crm_store.py)
-  unknown customer_id: reply "I couldn't find a customer..." and stop
+check_customer: only if the message names a customer ID,
+  check it exists (mock_crm/crm_store.py); unknown: reply
+  "I couldn't find a customer..." and stop
                       |
                       v
 check_neo4j: is Neo4j reachable?
@@ -43,44 +46,49 @@ check_neo4j: is Neo4j reachable?
                       |
                       v
 classify_intent (*MODEL: Jev*): what does consultant want done?
-  explain: explain_answer (*MODEL: Claude*) answers about an earlier answer
                       |
-        +-------------+-------------+
-        |                           |
- troubleshooting                open_ended
-        |                           |
-        v                           v
-match_procedure (*MODEL: Jev*)      |
-  which of 20 procedures;           |
-  "none" -> knowledge base -------->+
-        |                           |
-        v                           v
-procedural_executor             graph_rag_chain
--------------------             ---------------
-start at step 1                 embed question (*MODEL: OpenAI*)
-        |                           |
-        v                           v
-fetch_step                      search Article nodes in Neo4j
-  Neo4j: step details             vector & fulltext search (top 5)
-  conditions.json: condition        |
-        |                           v
-        v                       follow CITES_RULE to linked Rules
-check the condition                 |
-  field/chain -> mock_crm           v
-  ticket text -> *MODEL: Claude*  *MODEL: Claude* writes answer
-        |                           |
-        +-- YES -------> resolve    |
-        +-- NO (more) -> next step -+
-        |                (loop back)|
-        +-- NO (last) -> resolve    |
-                             |      |
-                             v      |
-                          resolve   |
-                             |      |
-                             +<-----+
+        +-------------+-------------+--------------------------------+
+        |                           |                                |
+ troubleshooting                open_ended                        explain
+        |                           |                                |
+        v                           |                                v
+load_crm: customer's CRM record     |                              explain_answer
+  (troubleshooting only); no        |                              (*MODEL: Claude*):
+  customer yet: ask which one       |                              last 10 messages,
+        |                           |                              each labelled with
+        v                           v                              its customer or as
+match_procedure (*MODEL: Jev*)      |                              general, + wording
+  which of 20 procedures;           |                              of the rules cited
+  "none" -> knowledge base -------->+                                |
+        |                           |                                |
+        v                           v                                |
+procedural_executor             graph_rag_chain                      |
+-------------------             ---------------                      |
+start at step 1                 embed question (*MODEL: OpenAI*)     |
+        |                           |                                |
+        v                           v                                |
+fetch_step                      search Article nodes in Neo4j        |
+  Neo4j: step details             vector & fulltext search (top 5)   |
+  conditions.json: condition        |                                |
+        |                           v                                |
+        v                       follow CITES_RULE to linked Rules    |
+check the condition                 |                                |
+  field/chain -> mock_crm           v                                |
+  ticket text -> *MODEL: Claude*  *MODEL: Claude* writes answer      |
+        |                           |                                |
+        +-- YES -------> resolve    |                                |
+        +-- NO (more) -> next step -+                                |
+        |                (loop back)|                                |
+        +-- NO (last) -> resolve    |                                |
+                             |      |                                |
+                             v      |                                |
+                          resolve   |                                |
+                             |      |                                |
+                             +<-----+<-------------------------------+
                              |
                              v
 answer + citations: action and rules, or articles and rules
+  (an explanation cites none)
 
 ```
 
@@ -95,6 +103,8 @@ Checked (PROC-001 "Customer cannot activate roaming"):
 2. Customer's plan is inactive: no (plan_status = active)
 3. Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)
 ```
+
+
 
 ## GraphRAG Pipeline Architecture
 
@@ -136,6 +146,8 @@ Checked (PROC-001 "Customer cannot activate roaming"):
 
 ```
 
+
+
 ## The core idea
 
 A **procedure** is a list of **steps** for one known problem. Each step asks one yes/no **condition** about the customer. An API checks the condition.
@@ -167,14 +179,21 @@ Procedure PROC-001  "Customer cannot activate roaming"
 - A **Rule** is a business policy governing how an action may be carried out: an approval it needs, an amount or time limit, something to never disclose, or a hard block. For example, "Tier 2 escalations require a documented troubleshooting summary". An action can be governed by several rules, and the answer cites each one.
 - The final reply is the agent's last message: text with `citations` on the message (the action's ID, then the IDs of any rules governing it).
 
+
+
 ### Error handling
+
 
 | Case                    | When it happens                                                                                                                                                    | What is returned                                                                                                                                                 | Where                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | **Message B**           | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
 | **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                                                                            | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
-| **Unknown customer ID** | The `customer_id` is not in the CRM. This is checked first, before Claude is called.                                                                               | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why)                               | `handle_crm_error`, `agent/supervisor.py`                |
+| **Unknown customer ID** | The message names a customer ID that is not in the CRM. Checked first, before any paid model call; a message naming no customer is not checked. | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why) | `check_customer`, `agent/supervisor.py` |
+| **No customer for troubleshooting** | A troubleshooting message, and no customer named yet in this conversation. A general question needs none. | "Which customer is this about? Start your message with their customer ID, …" (`error` says why) | `load_crm`, `agent/supervisor.py` |
 | **Neo4j down**          | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call.                                                | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason)   | `check_neo4j`, `agent/supervisor.py`                     |
+
+
+
 
 ### How it is stored in Neo4j
 
@@ -187,6 +206,8 @@ Procedure PROC-001  "Customer cannot activate roaming"
 
 - There is no `Procedure` node. A procedure is every `Step` with the same `procedureId`, joined in order by `NEXT_STEP`.
 - `API` nodes describe how a condition would be checked in production. The agent does not read them. It reads the steps, actions and rules from Neo4j and the full condition from `data/conditions.json`.
+
+
 
 ## Jev
 
@@ -237,6 +258,8 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
 - `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none". "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
 - The 0.5 thresholds are starting values, set at the top of `agent/supervisor.py`. Tune them on a labelled set.
 
+
+
 ## **Slack** (how a command reaches the agent)
 
  Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
@@ -268,28 +291,26 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
  Slack workspace        only the person who typed the command sees the reply
 ```
 
-A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages, the current customer and each customer's last troubleshooting result are saved between messages. A message naming a different customer switches to them; the conversation is kept.
+A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages (each stamped with its customer) and the current customer are saved between messages. A message naming a different customer switches to them; the conversation is kept.
 
 ## Follow-up questions
 
 The agent is compiled with a checkpointer, and each conversation has its own `thread_id`, so the state is saved between messages:
 
-- `messages`: the whole conversation;
-- `customer_id`: the customer currently being discussed (the last ID named);
-- `troubleshooting_results`: each customer's last procedure result, kept short: procedure, action, rules, and one line per step checked.
+- `messages`: the whole conversation. A consultant message is stamped with the customer it is about (`additional_kwargs["customer_id"]`): the ID it names (stamped by the Slack bot), or the current customer for a troubleshooting follow-up naming none (stamped by `load_crm`). An unstamped message was a general question. Each reply belongs to the consultant message before it;
+- `customer_id`: the customer currently being discussed (the last ID named).
 
-One conversation can cover several customers. Naming a different customer switches to them and keeps everything; coming back to an earlier customer finds their result again. The walk's full `step_trace` stays inside the procedure subgraph and is never saved (see `agent/state.py`). A third path, `explain`, answers questions about an earlier answer:
+A message naming a customer ID is checked (it must exist) and that customer becomes the current one. A message naming none is not checked: a general question needs no customer, and a troubleshooting follow-up uses the current customer (with none yet, the agent asks which one). The CRM record is loaded only for troubleshooting. One conversation can cover several customers and general questions; naming a different customer switches to them and keeps everything. The walk's full `step_trace` stays inside the procedure subgraph and is never saved (see `agent/state.py`). A third path, `explain`, answers questions about an earlier answer:
 
 ```
  message 1  "CUST-1001 customer cannot activate roaming"   -> procedure walk -> reply: ACT-015, R012
-            saved: the reply, and troubleshooting_results["CUST-1001"]
- message 2  "what does that rule say?"    (no customer ID) -> explain: the rule's wording from Neo4j
- message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values from CUST-1001's result
- message 4  "CUST-1005 customer cannot activate roaming"   -> switch to CUST-1005, new walk; CUST-1001's result is kept
- message 5  "CUST-1001 why?"                                -> back to CUST-1001: explain from CUST-1001's result
+ message 2  "what does that rule say?"    (no customer ID) -> explain: R012's wording from Neo4j
+ message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values in the reply to message 1
+ message 4  "CUST-1005 customer cannot activate roaming"   -> switch to CUST-1005, new walk
+ message 5  "CUST-1001 why?"                                -> back to CUST-1001: explain from CUST-1001's messages
 ```
 
-`explain` gathers the facts in plain code (the current customer's result, plus the action and rule text from Neo4j) and Claude words the answer from those only. It is given only the current customer's result, so one customer's facts don't end up in another's answer. A result records what was true when the answer was given. It is not a cache: every new question re-checks the customer's data (see `docs/lessons.md`).
+`explain` gives Claude the last 10 messages, each labelled with its customer (`[CUST-1001] ...`, `[reply about CUST-1001] ...`) or as general (`[general] ...`, `[reply, general] ...`), with each reply's sources, plus the wording of the rules those messages cite, fetched from Neo4j. A troubleshooting reply already contains the action, why the walk stopped, and every step with its value, so the conversation is the whole record. If the question names a customer, Claude answers only about that customer; if it names none, it answers about the earlier answer it refers to, usually the latest. Either way it is told never to claim an earlier answer was wrong. Without the labels, an answer for CUST-1005 once looked like CUST-1001's, and Claude "corrected" an answer it never gave. An answer records what was true when it was given. It is not a cache: every new question re-checks the customer's data (see `docs/lessons.md`).
 
 Without a checkpointer every call is a single question (that is what `/agent` and `graph.invoke(...)` do). The Slack bot saves conversations in `checkpoints.db` (`config.get_checkpointer()`, SQLite).
 

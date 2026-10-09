@@ -8,7 +8,7 @@ Consultants can reach the Super Agent from Slack in two ways:
 | Example | `/agent CUST-1005 customer cannot activate roaming` | `CUST-1005 customer cannot activate roaming`, then `why?` |
 | Remembers earlier messages | no, every command starts from zero | yes, saved in `checkpoints.db` |
 | Who sees the answer | only you, and Slack drops it when the app reloads | you, as normal messages that stay |
-| Customer ID | in every command | in the first message only |
+| Customer ID | when the question is about a customer | when the message is about a customer (follow-ups for the current one need none) |
 
 Every answer ends with its sources, for example `_Sources: ACT-015, R012_`.
 
@@ -26,11 +26,11 @@ The answer is visible only to you, because it contains customer information.
 - **The answer doesn't stay.** Slack drops private replies when the app reloads. If the agent remembered the conversation, it would remember answers you can no longer see.
 - **There's nowhere to keep a conversation.** A slash command has no thread to continue in, and Slack does not allow slash commands inside threads.
 
-If the customer ID or the question is missing, the bot replies with an example. An unknown ID gets "I couldn't find a customer with ID ...".
+A general question needs no customer ID. A troubleshooting question with none gets "Which customer is this about?…". An unknown ID gets "I couldn't find a customer with ID …". An ID with no question gets an example.
 
 ## 2. A direct message: a conversation
 
-Open a DM with the bot. The first message names the customer; follow-ups do not need to:
+Open a DM with the bot. Name the customer when the message is about one; follow-ups for the same customer, and general questions, need no ID:
 
 ```
 CUST-1005 customer cannot activate roaming
@@ -38,7 +38,7 @@ what does that rule say?
 why did it end up at Tier 2?
 ```
 
-The agent remembers what was said, the customer currently being discussed, and each customer's last troubleshooting result.
+The agent remembers what was said, which customer each message was about, and the customer currently being discussed.
 
 - One DM is one conversation.
 - A thread inside the DM is a separate conversation, so you can work two cases side by side.

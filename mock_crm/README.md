@@ -41,11 +41,10 @@ This folder's job is to answer a condition for a given customer: yes (`True`) or
 ## How the mock CRM works
 
 ```
- inject_crm(): once per turn, first thing               [agent/supervisor.py]
+ load_crm(): troubleshooting turns only                 [agent/supervisor.py]
  |
  +--> get_customer("CUST-1001")                         [mock_crm/crm_store.py]
  |      reads data/crm_records.json (read once)
- |      unknown ID --> CustomerNotFoundError
  |  puts the record in state["crm_context"]
  v
  procedure walk, for each step                          [agent/procedural_executor.py]
@@ -77,7 +76,7 @@ This folder's job is to answer a condition for a given customer: yes (`True`) or
 ```
 
 - **Read-only.** Nothing writes to the CRM or the lookup files.
-- **The customer's record is loaded once per turn**, by `inject_crm` (`agent/supervisor.py`). Every check after that reads the copy in state (`crm_context`).
+- **The customer's record is loaded only for troubleshooting turns**, by `load_crm` (`agent/supervisor.py`). Every check after that reads the copy in state (`crm_context`). Earlier in the turn, `check_customer` uses `get_customer` only to check that an ID the message names exists (unknown: `CustomerNotFoundError`, and the turn ends).
 - **Only chain checks reach the other lookup files**, keyed by a value the previous lookup produced.
 
 

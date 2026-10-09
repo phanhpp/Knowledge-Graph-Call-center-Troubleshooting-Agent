@@ -69,4 +69,4 @@ Stack: LangGraph (plain nodes — no `deepagents`, see below), Neo4j (graph + na
 
 ## TODO
 
-- **Ask for clarification when a message is unclear and has no customer ID.** Today a message with no customer ID is rejected before the agent runs, with a fixed template (`MISSING_CUSTOMER_ID` / `MISSING_CUSTOMER_ID_DM` in `slack_bot/formatting.py`, checked in `slack_bot/app.py`). The graph itself also assumes an ID: `inject_crm` reads `state["customer_id"]`. Instead, the agent should ask a clarifying question back: which customer, and what the problem is. Keep in mind that a general policy question ("what is the SIM replacement fee?") is `open_ended` and needs no customer at all, so it should not be blocked for lacking one.
+- **Ask what the problem is when a message is unclear.** Done for the customer: a message naming no customer is fine (a general question needs none); a named ID is checked first (`check_customer`), and troubleshooting with no customer yet replies "Which customer is this about?" (`load_crm`). Not done: asking a clarifying question when the problem itself is unclear, instead of routing it to the knowledge base.
