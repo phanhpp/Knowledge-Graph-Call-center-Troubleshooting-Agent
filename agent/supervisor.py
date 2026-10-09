@@ -308,6 +308,8 @@ def _walk_facts(result: Optional[dict]) -> tuple[str, list[str]]:
     if rules:
         lines.append("Rules governing it:")
         lines += [f"- {r['id']}: {r['description']}. {r['detail']}" for r in rules]
+    else:
+        lines.append("Rules governing it: none")  # said outright, so Claude can't pass a step off as a rule
     return "\n".join(lines), [action_id, *(r["id"] for r in rules)]
 
 
@@ -332,7 +334,9 @@ def explain_answer(state: SuperAgentState) -> dict:
         "You are helping a call-centre consultant. They are asking a follow-up question about an "
         f"earlier answer for customer {customer_id}. The conversation may also mention other "
         f"customers; answer only about {customer_id}. Answer from the conversation and the facts "
-        "below ONLY. If they do not contain the answer, say so plainly. Be brief.\n\n"
+        "below ONLY. If they do not contain the answer, say so plainly. Be brief. A rule is a business "
+        "policy governing the action, listed under 'Rules governing it'; a step's condition is a check, "
+        "not a rule. If no rule governs the action, say so plainly; never call anything else a rule.\n\n"
         f"Facts about {customer_id}'s last procedure walk:\n{facts or '(no procedure was run for this customer)'}"
     )
     llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"})

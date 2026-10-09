@@ -419,3 +419,17 @@ def test_walk_facts_reads_the_action_and_its_rule_from_neo4j():
     assert 'Action given: ACT-015 "Escalate to Tier 2 - unresolved by standard checks"' in facts
     assert "R012: Tier 2 escalations require a documented troubleshooting summary" in facts
     assert cited == ["ACT-015", "R012"]
+
+
+def test_walk_facts_say_outright_when_no_rule_governs_the_action():
+    """(Needs Neo4j.) CUST-1005's walk ends at ACT-027, which no rule governs. The facts say so, so a
+    "what does that rule say?" can't be answered by passing a step's condition off as a rule."""
+    result = build_procedural_executor_graph().invoke(
+        {"matched_procedure_id": "PROC-001", "crm_context": get_customer("CUST-1005")}
+    )["troubleshooting_results"]["CUST-1005"]
+
+    facts, cited = _walk_facts(result)
+
+    assert "Action given: ACT-027" in facts
+    assert "Rules governing it: none" in facts
+    assert cited == ["ACT-027"]
