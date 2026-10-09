@@ -1,68 +1,17 @@
-# Super Agent (knowledge-graph clone)
+# Super Agent (Vodafone Clone) — Knowledge-Graph Copilot
 
-A copilot for call-centre consultants. The consultant types a customer's problem, and the agent replies with what to tell or do next. It only advises and never changes anything. It is built on synthetic data, a Neo4j graph and LangGraph.
+## Overview
 
-## The core idea
+Super Agent is a clone of Vodafone’s enterprise copilot for call-center consultants. When a consultant types a customer's problem, the agent injects live customer context, identifies intent, and either walks a deterministic procedural flowchart or generates a grounded answer via a GraphRAG pipeline over a Neo4j knowledge graph.  
 
-A **procedure** is a list of **steps** for one known problem. Each step asks one yes/no **condition** about the customer. An API checks the condition.
+**Key Features**:
 
-```
-Procedure PROC-001  "Customer cannot activate roaming"
+- CRM State Injection: Injects customer records (`crm_context`) directly into state before execution.
+- Intent Classification & Matching: Uses custom classifiers (*Jev*) for request intent routing and matching queries against 20 operational procedures.
+- Slack Frontend: Provides real-time interactive communication via Slack WebSocket (Socket Mode).
+- GraphRAG Engine with Hybrid Search & Graph Grounding: Performs dense vector and sparse keyword search over policy articles, then traverses Neo4j graph relationships to attach the governing rules (`(Article)-[:CITES_RULE]->(Rule)`).
 
-  Step 1  Condition: "Is roaming disabled?"     API check: GET /account/{customer_id}/roaming-status
-            YES -> Action: "Enable roaming flag and inform customer of 10-minute activation delay"   STOP
-            NO  -> go to Step 2
-
-  Step 2  Condition: "Is the customer's plan inactive?"
-            YES -> Action: "Direct customer to reactivate plan before roaming works"                 STOP
-            NO  -> go to Step 3
-
-  Step 3  Condition: "Does the device NOT support the destination's roaming bands?"   (last step)
-            YES -> Action: "Explain that the device does not support the roaming bands ..."          STOP
-            NO  -> Action: "Escalate to Tier 2 - unresolved by standard checks"
-                   (every check passed, so nothing explains the problem: escalate, never "no action needed")
-                   (only the last step has an action for NO, `action_if_false_id`, so a procedure always ends with an answer)
-```
-
-- **The API only checks** if a condition is true or false. The action is text that tells the consultant what to do.
-- **YES** stops the procedure and gives that step's action. **NO** moves to the next step. On the last step, NO returns that step's fallback action (`action_if_false_id`)
-- 3 types of conditions:
-  - Field check: Reads a single CRM value to evaluate simple conditions directly (e.g., checking if roaming is disabled).
-  - Chain check: Runs several lookups in a row, where one answer feeds the next (e.g. outage data is by zip code, so reads the customer's zip code from the CRM first, then looks up outages for that zip)
-  - Ticket check: Uses an LLM to interpret free-text customer tickets, as unstructured human language cannot be parsed by static code.
-- A **Rule** is a business policy governing how an action may be carried out: an approval it needs, an amount or time limit, something to never disclose, or a hard block. For example, "Tier 2 escalations require a documented troubleshooting summary". An action can be governed by several rules, and the answer cites each one.
-- The final reply is the agent's last message: text with `citations` on the message (the action's ID, then the IDs of any rules governing it).
-
-
-
-## Error handling
-
-
-| Case                    | When it happens                                                                                                                                                    | What is returned                                                                                                                                                 | Where                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Message B**           | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
-| **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                                                                            | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
-| **Unknown customer ID** | The `customer_id` is not in the CRM. This is checked first, before Claude is called.                                                                               | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why)                               | `handle_crm_error`, `agent/supervisor.py`                |
-| **Neo4j down**          | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call.                                                | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason)   | `check_neo4j`, `agent/supervisor.py`                     |
-
-
-
-
-## How it is stored in Neo4j
-
-```
-(Step)-[:HAS_CONDITION]->(Condition)-[:VALIDATED_BY]->(API)
-(Step)-[:HAS_ACTION {outcome: true | false}]->(Action)-[:GOVERNED_BY]->(Rule)
-(Step)-[:NEXT_STEP]->(Step)
-(Article)-[:CITES_RULE]->(Rule)          knowledge-base articles
-```
-
-- There is no `Procedure` node. A procedure is every `Step` with the same `procedureId`, joined in order by `NEXT_STEP`.
-- `API` nodes describe how a condition would be checked in production. The agent does not read them. It reads the steps, actions and rules from Neo4j and the full condition from `data/conditions.json`.
-
-
-
-## The whole design
+## The design
 
 **Build** (run once, and again whenever `data/` changes):
 
@@ -147,36 +96,150 @@ Checked (PROC-001 "Customer cannot activate roaming"):
 3. Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)
 ```
 
+## GraphRAG Pipeline Architecture
 
-
-**Routing** (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Jev answers two questions about the same conversation in one request. Both judge what the consultant wants done, not the topic: most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+```markdown
+               Consultant Input: "What is the SIM replacement fee?"
+                                        |
+                                        v
+                            1. Generate Embeddings
+                 OpenAI text-embedding-3-small (1,536 dims)
+                                        |
+                                        v
+                             2. Hybrid Search Engine
+               Dual search across 25 Article nodes in Neo4j
+                                        |
+                       +----------------+----------------+
+                       |                                 |
+                 Vector Index                     Fulltext Index
+             (Semantic Meaning)                  (Exact Keywords)
+                       |                                 |
+                       +----------------+----------------+
+                                        |
+                                        v
+                          Scale & Merge Score Lists
+                       Keep Top 5 Relevant Articles
+                                        |
+                                        v
+                             3. Graph Grounding
+              Traverse (Article)-[:CITES_RULE]->(Rule) in Neo4j
+                     Extract linked governing Rule IDs
+                                        |
+                                        v
+                            4. Answer Synthesis
+                Claude Sonnet generates answer using ONLY
+                      retrieved Articles & Rules
+                                        |
+                                        v
+                            5. Consultant Response
+                Deliver answer citing Article IDs + Rule IDs
 
 ```
-            state["messages"]  (whole conversation; last = new message)
-                            |
-              one Jev request, two questions
-          +-----------------+------------------+
-          v                                    v
-  path: Choice                           own_situation: Noul
-  "what does the consultant              "does the answer depend on THIS
-   want done?" (not the topic)            customer's account?"
-          |                                    |
-  returns a label + confidence           returns P(yes), 0 to 1
-  e.g. troubleshooting, 0.92             e.g. 0.87
-          +-----------------+------------------+
-                            v
-                 rules in plain code:
-  troubleshooting  AND confidence >= 0.5  AND P(yes) >= 0.5  --> troubleshooting --> match_procedure
-  troubleshooting  but either check fails                    --> open_ended      --> knowledge base
-  explain          on the very first message                 --> open_ended      --> knowledge base
-  otherwise                                                  --> the label as given
+
+## The core idea
+
+A **procedure** is a list of **steps** for one known problem. Each step asks one yes/no **condition** about the customer. An API checks the condition.
+
+```
+Procedure PROC-001  "Customer cannot activate roaming"
+
+  Step 1  Condition: "Is roaming disabled?"     API check: GET /account/{customer_id}/roaming-status
+            YES -> Action: "Enable roaming flag and inform customer of 10-minute activation delay"   STOP
+            NO  -> go to Step 2
+
+  Step 2  Condition: "Is the customer's plan inactive?"
+            YES -> Action: "Direct customer to reactivate plan before roaming works"                 STOP
+            NO  -> go to Step 3
+
+  Step 3  Condition: "Does the device NOT support the destination's roaming bands?"   (last step)
+            YES -> Action: "Explain that the device does not support the roaming bands ..."          STOP
+            NO  -> Action: "Escalate to Tier 2 - unresolved by standard checks"
+                   (every check passed, so nothing explains the problem: escalate, never "no action needed")
+                   (only the last step has an action for NO, `action_if_false_id`, so a procedure always ends with an answer)
 ```
 
-- **Why two questions.** A Choice always picks one of its labels, so its confidence only says how sure Jev is among the three. The Noul asks the yes/no distinction on its own, as an independent check before anything is walked. For "What are the early termination fees if I cancel my contract?", the Choice may lean to troubleshooting because of "cancel", but P(yes) should be low (the fee is the same for every customer), so it goes to the knowledge base.
+- **The API only checks** if a condition is true or false. The action is text that tells the consultant what to do.
+- **YES** stops the procedure and gives that step's action. **NO** moves to the next step. On the last step, NO returns that step's fallback action (`action_if_false_id`)
+- 3 types of conditions:
+  - Field check: Reads a single CRM value to evaluate simple conditions directly (e.g., checking if roaming is disabled).
+  - Chain check: Runs several lookups in a row, where one answer feeds the next (e.g. outage data is by zip code, so reads the customer's zip code from the CRM first, then looks up outages for that zip)
+  - Ticket check: Uses an LLM to interpret free-text customer tickets, as unstructured human language cannot be parsed by static code.
+- A **Rule** is a business policy governing how an action may be carried out: an approval it needs, an amount or time limit, something to never disclose, or a hard block. For example, "Tier 2 escalations require a documented troubleshooting summary". An action can be governed by several rules, and the answer cites each one.
+- The final reply is the agent's last message: text with `citations` on the message (the action's ID, then the IDs of any rules governing it).
+
+### Error handling
+
+| Case                    | When it happens                                                                                                                                                    | What is returned                                                                                                                                                 | Where                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **Message B**           | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
+| **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                                                                            | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
+| **Unknown customer ID** | The `customer_id` is not in the CRM. This is checked first, before Claude is called.                                                                               | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why)                               | `handle_crm_error`, `agent/supervisor.py`                |
+| **Neo4j down**          | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call.                                                | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason)   | `check_neo4j`, `agent/supervisor.py`                     |
+
+### How it is stored in Neo4j
+
+```
+(Step)-[:HAS_CONDITION]->(Condition)-[:VALIDATED_BY]->(API)
+(Step)-[:HAS_ACTION {outcome: true | false}]->(Action)-[:GOVERNED_BY]->(Rule)
+(Step)-[:NEXT_STEP]->(Step)
+(Article)-[:CITES_RULE]->(Rule)          knowledge-base articles
+```
+
+- There is no `Procedure` node. A procedure is every `Step` with the same `procedureId`, joined in order by `NEXT_STEP`.
+- `API` nodes describe how a condition would be checked in production. The agent does not read them. It reads the steps, actions and rules from Neo4j and the full condition from `data/conditions.json`.
+
+## Jev
+
+**Jev** (TypeSafe's classification model, via the `langchain-typesafe` package). Instead of writing prose like a chat LLM, Jev answers a question you define with structured output that code can use straight away: a label, a probability, or a score. You give it some input (text or messages) and one or more questions; it answers them all in one request.
+
+Why it is used for routing:
+
+- **Code can act on it directly.** The answer is a label plus numbers, so there is nothing to parse, and no risk of an answer outside the allowed labels.
+- **Probabilities, so you choose the cut-off.** Code can say "walk a procedure only if troubleshooting is at least 50% likely", which is what makes a cautious fallback possible.
+- **Fast and small.** In our logs a call takes about 0.3 s, and its output is a few numbers rather than generated text.
+
+Its three kinds of question:
+
+
+| Kind     | Asks                    | Returns                                                      | Use it for                                 |
+| -------- | ----------------------- | ------------------------------------------------------------ | ------------------------------------------ |
+| `Noul`   | Is this true?           | the probability of yes, 0 to 1                               | a clear yes/no `if` in code                |
+| `Choice` | Which of these options? | the chosen label, a probability per label, a confidence      | sending each option down its own code path |
+| `Score`  | Which level on a scale? | a score, the level descriptions, probabilities, a confidence | a spectrum, checked against a threshold    |
+
+
+A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it only for a clearly defined yes/no; use `Score` for a level. This project uses only `Choice`, in `classify_intent` and `match_procedure`. Jev is an external service (`api.typesafe.ai`, `TYPESAFE_API_KEY`): the consultant's message is sent to it. The package is still in beta.
+
+## Routing
+
+ (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Each is one Jev Choice, given only the consultant's latest message. It judges what the consultant wants done, not the topic: most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+
+```
+  the consultant's latest message only (not the conversation)
+  |
+  v
+  one Jev Choice: what does the consultant want done? (not the topic)
+  returns a label and a probability for each label,
+  e.g. troubleshooting 0.96, open_ended 0.03, explain 0.01
+  |
+  v
+  rules in plain code:
+  troubleshooting, P(troubleshooting) >= 0.5  --> troubleshooting  --> match_procedure
+  troubleshooting, P(troubleshooting) <  0.5  --> open_ended       --> knowledge base
+  explain, on the first message               --> open_ended       --> knowledge base
+  explain, after an earlier answer            --> explain          --> explain_answer
+  open_ended                                  --> open_ended       --> knowledge base
+```
+
+- **Only the latest message.** Measured live, it classifies as well as the whole conversation, and it keeps earlier customers' messages and a growing history out of the Jev calls. The "nothing to explain on the first message" rule checks the saved conversation, which is still complete.
+- **The probability, not the confidence.** The decision uses the chosen label's probability. Jev's `confidence` measures how concentrated the whole distribution is, which is harder to read: for "and the fee?" after a cancellation, confidence was 0.54 while open_ended's probability was 0.69.
+- **The fee question** ("What are the early termination fees if I cancel my contract?") goes to the knowledge base (open_ended 0.92), the case the old Claude classifier got wrong.
 - `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none". "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
 - The 0.5 thresholds are starting values, set at the top of `agent/supervisor.py`. Tune them on a labelled set.
 
-**Slack** (how a command reaches the agent). Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
+## **Slack** (how a command reaches the agent)
+
+ Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
 
 ```
  Slack workspace
@@ -204,8 +267,6 @@ Checked (PROC-001 "Customer cannot activate roaming"):
    v
  Slack workspace        only the person who typed the command sees the reply
 ```
-
-
 
 A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages, the current customer and each customer's last troubleshooting result are saved between messages. A message naming a different customer switches to them; the conversation is kept.
 
@@ -264,7 +325,7 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 ## Status
 
 - **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, the open-ended path, and follow-up questions in a saved conversation.
-- **Routing uses Jev, but has not been run live yet** (see TODO below).
+- **Routing uses Jev** and passes the end-to-end tests live, including the fee question the old Claude classifier misrouted. The thresholds are not tuned yet (see TODO below).
 - **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but never run against a real workspace — that needs your Slack tokens (see `slack_bot/slack_setup.md`).
 - **Not built:** Microsoft Teams (needs a public HTTPS endpoint and an Azure Bot registration, no Socket Mode equivalent). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
 
