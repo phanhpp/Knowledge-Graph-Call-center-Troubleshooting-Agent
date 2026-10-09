@@ -6,7 +6,6 @@ from slack_bot.access import Access
 from slack_bot.app import handle_direct_message, is_direct_message_from_user
 from slack_bot.formatting import (
     ERROR_REPLY,
-    MISSING_CUSTOMER_ID_DM,
     MISSING_QUESTION_DM,
     NOT_ALLOWED,
     WORKING,
@@ -75,14 +74,14 @@ def test_first_message_with_a_customer_runs_the_agent_and_edits_the_reply_in():
     ]
 
 
-def test_first_message_without_a_customer_asks_for_one():
-    """A new conversation has no customer, so the bot asks for the ID and does not run the agent."""
+def test_a_first_message_naming_no_customer_still_goes_to_the_agent():
+    """No customer ID is fine (a general question); the agent asks for one only if it needs it."""
     client, chat = FakeClient(), FakeChat()
 
-    handle_direct_message(dm("customer cannot activate roaming"), client, chat)
+    handle_direct_message(dm("what is the SIM replacement fee?"), client, chat)
 
-    assert chat.sent == []
-    assert client.posted == [{"channel": "D1", "text": MISSING_CUSTOMER_ID_DM}]
+    assert chat.sent == [("slack-D1", "what is the SIM replacement fee?", None)]
+    assert client.posted == [{"channel": "D1", "text": WORKING}]
 
 
 def test_a_customer_id_with_no_question_asks_for_the_question():

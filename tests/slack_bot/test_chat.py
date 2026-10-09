@@ -33,8 +33,9 @@ class FakeGraph:
         time.sleep(self.pause)
         thread_id = config["configurable"]["thread_id"]
         self.invocations.append((thread_id, update))
-        if "customer_id" in update:
-            self.saved.setdefault(thread_id, {})["customer_id"] = update["customer_id"]
+        named = update["messages"][0].additional_kwargs.get("customer_id")
+        if named:  # as check_customer does: a named customer becomes the current one
+            self.saved.setdefault(thread_id, {})["customer_id"] = named
         with self._guard:
             self.active -= 1
         return {"messages": [update["messages"][0], AIMessage("Answer", additional_kwargs={"citations": ["ACT-015", "R012"]})]}
@@ -67,25 +68,27 @@ def test_send_returns_the_reply_text_and_citations():
     assert chat.send("t1", "roaming", "CUST-1005") == {"answer": "Answer", "citations": ["ACT-015", "R012"]}
 
 
-def test_send_gives_the_graph_the_message_and_the_customer():
-    """The consultant's text goes in as a HumanMessage, with the customer ID when one was given."""
+def test_send_gives_the_graph_the_message_stamped_with_the_customer():
+    """The consultant's text goes in as a HumanMessage stamped with the customer ID it named; the
+    customer is not sent as a separate field."""
     chat, graph, _ = make_chat()
     chat.send("t1", "roaming", "CUST-1005")
 
     thread_id, update = graph.invocations[0]
     assert thread_id == "t1"
-    assert update["customer_id"] == "CUST-1005"
+    assert list(update) == ["messages"]
     assert isinstance(update["messages"][0], HumanMessage)
     assert update["messages"][0].content == "roaming"
+    assert update["messages"][0].additional_kwargs == {"customer_id": "CUST-1005"}
 
 
 def test_a_follow_up_sends_no_customer_so_the_saved_one_is_kept():
-    """Without a customer ID the update carries none: the graph keeps the saved customer."""
+    """Without a customer ID the message is not stamped: the graph keeps the saved customer."""
     chat, graph, _ = make_chat()
     chat.send("t1", "roaming", "CUST-1005")
     chat.send("t1", "why?", None)
 
-    assert "customer_id" not in graph.invocations[1][1]
+    assert graph.invocations[1][1]["messages"][0].additional_kwargs == {}
     assert chat.known_customer("t1") == "CUST-1005"
 
 
@@ -114,7 +117,7 @@ def test_a_different_customer_switches_without_losing_the_conversation():
 
     assert checkpointer.deleted == []
     assert chat.known_customer("t1") == "CUST-1002"
-    assert graph.invocations[1][1]["customer_id"] == "CUST-1002"
+    assert graph.invocations[1][1]["messages"][0].additional_kwargs["customer_id"] == "CUST-1002"
 
 
 def test_coming_back_to_an_earlier_customer_switches_back():

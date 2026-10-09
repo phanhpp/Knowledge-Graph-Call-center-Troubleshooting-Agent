@@ -13,9 +13,11 @@
        why?
        what does that rule say?
 
-   The first message names the customer; follow-ups do not need to. The conversation is saved
-   (in SQLite, see config.get_checkpointer), one per DM, or one per thread inside the DM. Naming a
-   different customer switches to them; the conversation, and each customer's last result, is kept.
+   A message naming a customer ID is about that customer (the ID is checked); a message naming none
+   is a general question, or a troubleshooting follow-up for the current customer (if troubleshooting
+   has no customer yet, the agent asks which one). The conversation is saved (in SQLite, see
+   config.get_checkpointer), one per DM, or one per thread inside the DM. Naming a different customer
+   switches to them; the conversation is kept, each message stamped with its customer.
 
 How it connects: Socket Mode. The bot opens a connection to Slack itself, so it needs no public URL
 and runs on a laptop.
@@ -34,7 +36,7 @@ With neither of the first two set, anyone in the workspace can DM the bot and lo
 
 import logging
 import os
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -43,8 +45,6 @@ from slack_bot.access import Access
 from slack_bot.chat import AgentChat
 from slack_bot.formatting import (
     ERROR_REPLY,
-    MISSING_CUSTOMER_ID,
-    MISSING_CUSTOMER_ID_DM,
     MISSING_QUESTION,
     MISSING_QUESTION_DM,
     NOT_ALLOWED,
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 # The function behind /agent: ask(question, customer_id) -> {"answer": text, "citations": [ids]}.
 # It runs the agent once, with no memory. Passed in (not imported) so tests can use a fake.
-Ask = Callable[[str, str], dict]
+Ask = Callable[[str, Optional[str]], dict]
 
 # Who sees an /agent reply: "ephemeral" = only the person who typed it;
 # "in_channel" = everyone in the channel, together with the command they typed.
@@ -72,8 +72,8 @@ def handle_command(
     """Answer one /agent command, replacing the "Checking..." message with the answer.
 
     In order: check the user (`access`) and the channel are allowed (an empty list means no limit), read the
-    customer ID and question from the text, run `ask`, and post the answer. Anything missing gets a
-    short message saying what to type instead. If the agent fails, the reply is ERROR_REPLY and the
+    customer ID (if any) and question from the text, run `ask`, and post the answer. A message with
+    an ID but no question gets a short message saying what to type instead. If the agent fails, the reply is ERROR_REPLY and the
     error is logged.
 
     `command` is what Slack sends: `text` (everything after "/agent"), `user_id` (who typed it) and
@@ -93,9 +93,6 @@ def handle_command(
         return
 
     parsed = parse_message(command.get("text", ""))
-    if parsed.customer_id is None:
-        reply(MISSING_CUSTOMER_ID)
-        return
     if not parsed.query:
         reply(MISSING_QUESTION)
         return
@@ -125,9 +122,8 @@ def handle_direct_message(event: dict, client, chat: AgentChat, access: Access =
     "Checking...", run the agent with the conversation's history, then edit "Checking..." into the
     answer. The reply goes where the message was: the DM, or the thread inside it.
 
-    The first message of a conversation must name the customer; later ones need not, since the
-    saved conversation remembers it. If the agent fails, the answer is ERROR_REPLY and the error is
-    logged.
+    A message need not name a customer: the agent asks for one only when troubleshooting needs it.
+    If the agent fails, the answer is ERROR_REPLY and the error is logged.
     """
     channel = event["channel"]
     thread_ts = event.get("thread_ts")  # set if the message is in a thread; None if not
@@ -145,9 +141,6 @@ def handle_direct_message(event: dict, client, chat: AgentChat, access: Access =
 
     parsed = parse_message(event.get("text", ""))
     thread_id = thread_id_for(channel, thread_ts)  # which saved conversation this message belongs to
-    if parsed.customer_id is None and chat.known_customer(thread_id) is None:
-        post(MISSING_CUSTOMER_ID_DM)
-        return
     if not parsed.query:
         post(MISSING_QUESTION_DM)
         return
@@ -205,9 +198,8 @@ def serve() -> None:
     for DMs.
     """
     import config  # noqa: F401  (loads .env)
-    from langchain_core.messages import HumanMessage
 
-    from agent.utils import reply_of
+    from agent.utils import consultant_message, reply_of
     from agent.supervisor import build_supervisor_graph
     from config import get_checkpointer, neo4j_unavailable_reason, setup_logging
 
@@ -232,12 +224,13 @@ def serve() -> None:
     checkpointer = get_checkpointer()  # saves conversations in SQLite
     chat = AgentChat(build_supervisor_graph(checkpointer=checkpointer), checkpointer)  # for DMs: remembers
 
-    def ask(query: str, customer_id: str) -> dict:
+    def ask(query: str, customer_id: Optional[str]) -> dict:
         """Answer one /agent question from scratch (no memory of earlier commands).
 
-        Returns {"answer": text, "citations": [ids]}, the shape format_reply expects.
+        customer_id is the one the command names, or None (a general question). Returns
+        {"answer": text, "citations": [ids]}, the shape format_reply expects.
         """
-        state = one_shot.invoke({"messages": [HumanMessage(query)], "customer_id": customer_id})
+        state = one_shot.invoke({"messages": [consultant_message(query, customer_id)]})
         reply = reply_of(state)
         return {"answer": reply.text, "citations": reply.citations}
 
