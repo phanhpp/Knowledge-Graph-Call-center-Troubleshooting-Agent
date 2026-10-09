@@ -33,17 +33,10 @@ def test_every_citation_is_a_real_article_or_rule(ask):
         assert citation in ARTICLE_IDS | RULE_IDS, f"unknown citation {citation!r}"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "The old Claude classifier sent this question to the 'Contract cancellation request' procedure. "
-        "classify_intent now uses Jev and judges what the consultant wants, not the topic. Remove this "
-        "marker once a live run (TYPESAFE_API_KEY set) shows it passing."
-    ),
-    strict=False,
-)
 def test_a_fee_question_that_sounds_like_a_procedure_goes_to_the_knowledge_base(ask):
     """'What are the early termination fees...' asks for information, so it belongs to the knowledge
-    base, even though a 'Contract cancellation request' procedure exists."""
+    base, even though a 'Contract cancellation request' procedure exists. The old Claude classifier
+    sent it to that procedure; classify_intent (Jev) judges what the consultant wants, not the topic."""
     result = ask("What are the early termination fees if I cancel my contract?", "CUST-1001")
 
     assert result["intent"] == "open_ended"
