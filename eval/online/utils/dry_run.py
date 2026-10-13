@@ -1,7 +1,7 @@
 """Dry run of the online code checks on real conversations, before (or after) setting them up.
 
 Fetches recent real conversations from LangSmith (read-only) with the same filter the online
-evaluators use (root runs named `LangGraph`, not errored), runs each check in eval/online/ on them
+evaluators use (root runs, not errored), runs each check in eval/online/ on them
 locally, and prints what each would score. Nothing is sent back: no scores are written, no
 evaluator is created, no trace's retention changes. It's LangSmith's "Test Code" button, on many
 runs at once.
@@ -40,7 +40,7 @@ def load(name: str):
 
 
 async def fetch(since: datetime, limit: int) -> list:
-    """The conversations the online evaluators would score: root runs named LangGraph, not errored.
+    """The conversations the online evaluators would score: root runs, not errored.
 
     Uses client.runs.query (list_runs is deprecated): it is async, takes the project's ID rather
     than its name, and returns only the fields listed in `selects`.
@@ -51,7 +51,6 @@ async def fetch(since: datetime, limit: int) -> list:
         project_ids=[project_id],
         is_root=True,
         has_error=False,
-        filter='eq(name, "LangGraph")',
         min_start_time=since,
         page_size=min(limit, 1000),
         selects=["ID", "OUTPUTS"],
@@ -72,7 +71,7 @@ def main() -> None:
 
     since = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
     runs = asyncio.run(fetch(since, args.limit))
-    print(f"{len(runs)} real conversations in project {PROJECT!r} since {since.date()} (root runs named LangGraph, not errored)\n")
+    print(f"{len(runs)} real conversations in project {PROJECT!r} since {since.date()} (root runs, not errored)\n")
 
     for name in CHECKS:
         check = load(name)

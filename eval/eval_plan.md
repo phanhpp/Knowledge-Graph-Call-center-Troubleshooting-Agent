@@ -33,7 +33,7 @@ Otherwise online works, and catches problems in real use.
 | Setting | Value |
 |---|---|
 | Name | the check's name above (it becomes the feedback key) |
-| Filter | root runs named `LangGraph`, not errored: the same for all three. No output-key filter (see below); each check's code decides which turns it scores and returns no score for the rest |
+| Filter | root runs (traces), not errored: the same for all three. No run-name filter (with `name = LangGraph` the rules didn't run) and no output-key filter (see below); each check's code decides which turns it scores and returns no score for the rest |
 | Code | paste the file; click **Test Code** on a recent run before saving |
 | Sampling | 1.0 (code checks cost nothing to run) |
 | Backfill | from 2026-10-13 (only possible when creating): earlier runs in `kg` are mostly test runs |

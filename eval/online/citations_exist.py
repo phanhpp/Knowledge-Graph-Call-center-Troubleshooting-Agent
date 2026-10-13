@@ -1,6 +1,6 @@
 """Online code evaluator `citations_exist`: paste this whole file into LangSmith.
 
-Filter: root runs named `LangGraph`, not errored. Only replies that cite something get a score:
+Filter: root runs (traces), not errored. Only replies that cite something get a score:
 a walk cites its action and rules, the knowledge base its articles and rules, and explanations
 cite nothing (decided in the code below, not by the filter).
 Score: 1 if every ID the reply cites exists in our data (actions, rules, knowledge-base
