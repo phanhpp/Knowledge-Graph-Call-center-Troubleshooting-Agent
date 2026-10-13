@@ -20,11 +20,9 @@ Otherwise online works, and catches problems in real use.
 
 ### Online: on every real conversation
 
-| Check | Runs on | Flags | Why online |
+| Check (= feedback key) | Scores (decided in its code) | Score 1 when | Why online |
 |---|---|---|---|
-| Check (= feedback key) | Runs on | Score 1 when | Why online |
-|---|---|---|---|
-| `citations_exist` | every turn | every cited ID (action, rule or article) exists in our data | needs only the list of valid IDs. Today code reads every ID from Neo4j, so this only fails if the graph drifts from `data/`; it guards the day an AI chooses citations |
+| `citations_exist` | troubleshooting and knowledge-base turns whose reply cites something (explanations and fixed messages cite nothing) | every cited ID (action, rule or article) exists in our data | needs only the list of valid IDs. Today code reads every ID from Neo4j, so this only fails if the graph drifts from `data/`; it guards the day an AI chooses citations |
 | `walk_has_checklist` | troubleshooting turns where a procedure was walked | the reply has its "Why:" line and "Checked (PROC-…)" list | a rule every walk reply must follow |
 | `troubleshooting_customer_handled` | troubleshooting turns | the customer rule held: with a customer known, the walk ran and the bot didn't ask; with none, the bot asked "Which customer…?" and walked nothing | a rule `load_crm` must enforce; a walk with no customer data would be a bug |
 
@@ -35,13 +33,15 @@ Otherwise online works, and catches problems in real use.
 | Setting | Value |
 |---|---|
 | Name | the check's name above (it becomes the feedback key) |
-| Filter | root runs named `LangGraph`, not errored; for the two troubleshooting checks also output key `intent` = `troubleshooting` |
+| Filter | root runs named `LangGraph`, not errored: the same for all three. No output-key filter (see below); each check's code decides which turns it scores and returns no score for the rest |
 | Code | paste the file; click **Test Code** on a recent run before saving |
 | Sampling | 1.0 (code checks cost nothing to run) |
 | Backfill | from 2026-10-13 (only possible when creating): earlier runs in `kg` are mostly test runs |
 | Retention | Advanced → clear **Extend trace retention**, so scored traces stay at base retention (needs the project's default to be base) |
 
 To check with **Test Code**: whether returning `{}` (no score, for turns a check doesn't apply to) is accepted. If not, narrow the filter so the check only runs where it applies.
+
+**Output-key filters are only a rough pre-filter.** Tested on the server against 415 real runs: `intent` = `explain` matched exactly (46), but "is not `explain`" matched 368 runs instead of 145, and "is one of `troubleshooting`, `open_ended`" matched 185 instead of 145. The key and the value seem to be matched separately, and a value can match anywhere in the outputs (the word "troubleshooting" appears in replies quoting rule R012). So we don't use output-key filters: **the check's code makes the decision**, and ours do: the troubleshooting checks test `intent` themselves, and `citations_exist` skips replies that cite nothing. Run names and metadata (used by the Jev evaluators) matched exactly.
 
 Not a check: the retrieved articles' scores. The search scales them so its best article is always 1.0, so a low best score never happens; whether the knowledge base covers a question is judged by Jev instead (`kb_context_lacks_answer`, below).
 

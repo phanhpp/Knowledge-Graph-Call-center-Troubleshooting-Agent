@@ -1,6 +1,7 @@
 """Online code evaluator `troubleshooting_customer_handled`: paste this whole file into LangSmith.
 
-Runs on: root runs named `LangGraph` with output `intent` = troubleshooting.
+Filter: root runs named `LangGraph`, not errored. Only troubleshooting turns get a score
+(decided in the code below, not by the filter).
 Checks the rule load_crm must enforce: troubleshooting needs a customer.
   - customer known (output `customer_id` set): the walk may run; asking "Which customer…?" is a bug.
   - no customer known: the bot must ask "Which customer…?" and must not walk a procedure.

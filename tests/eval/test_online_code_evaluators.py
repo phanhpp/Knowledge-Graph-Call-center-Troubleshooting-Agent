@@ -59,9 +59,9 @@ def test_citations_exist_fails_an_unknown_id():
     assert citations_exist(run(citations=["ACT-015", "R999"])) == {"citations_exist": 0}
 
 
-def test_citations_exist_passes_a_reply_that_cites_nothing():
-    """Nothing cited, nothing invalid."""
-    assert citations_exist(run(citations=[])) == {"citations_exist": 1}
+def test_citations_exist_gives_no_score_to_a_reply_that_cites_nothing():
+    """Explanations and fixed messages ("Which customer…?") cite nothing: nothing to check."""
+    assert citations_exist(run(citations=[])) == {}
 
 
 def test_citations_exist_reads_langchains_kwargs_form():

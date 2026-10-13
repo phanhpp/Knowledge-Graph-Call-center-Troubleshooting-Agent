@@ -1,6 +1,7 @@
 """Online code evaluator `walk_has_checklist`: paste this whole file into LangSmith.
 
-Runs on: root runs named `LangGraph` with output `intent` = troubleshooting.
+Filter: root runs named `LangGraph`, not errored. Only troubleshooting turns get a score
+(decided in the code below, not by the filter).
 Score: 1 if the walk's reply has its "Why:" line and its "Checked (PROC-…)" list with at least one
 numbered step, 0 if not. No score when no procedure was walked (the message fell back to the
 knowledge base) or the turn ended with an error.

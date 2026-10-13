@@ -1,9 +1,11 @@
 """Online code evaluator `citations_exist`: paste this whole file into LangSmith.
 
-Runs on: root runs named `LangGraph`.
+Filter: root runs named `LangGraph`, not errored. Only replies that cite something get a score:
+a walk cites its action and rules, the knowledge base its articles and rules, and explanations
+cite nothing (decided in the code below, not by the filter).
 Score: 1 if every ID the reply cites exists in our data (actions, rules, knowledge-base
-articles), 0 if any doesn't. A reply that cites nothing scores 1 (nothing invalid). No score
-when the run has no reply.
+articles), 0 if any doesn't. No score when the reply cites nothing (e.g. "Which customer…?" or
+another fixed message) or the run has no reply.
 
 Today no AI writes citations (code reads every ID from Neo4j), so this can only fail if the graph
 drifts from data/. It guards the day an AI chooses citations (e.g. "cite only the articles used").
@@ -42,4 +44,6 @@ def perform_eval(run):
         return {}
     reply = _fields(messages[-1])
     citations = (reply.get("additional_kwargs") or {}).get("citations") or [] # get the citation argument
+    if not citations:
+        return {}
     return {"citations_exist": int(all(c in VALID_IDS for c in citations))}
