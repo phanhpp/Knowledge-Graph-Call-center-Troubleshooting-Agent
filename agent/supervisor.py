@@ -381,8 +381,12 @@ def explain_answer(state: SuperAgentState) -> dict:
             "The question names no customer: answer about the earlier answer it refers to, usually "
             "the most recent one."
         )
+
+    # attach customer id to AI messages in chat history if exists otherwise label as 'general'; only last 10 messages
     history, cited = _explain_history(state["messages"], _EXPLAIN_HISTORY)
+    # for rules cited in AI respones, fetch the full definition from neo4j
     rules = _rule_wording(cited)
+
     system = SystemMessage(
         "You are helping a call-centre consultant. They are asking a follow-up question about an "
         "earlier answer. The conversation below can cover several customers and general questions: "
