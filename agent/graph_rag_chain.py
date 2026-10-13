@@ -54,7 +54,9 @@ from neo4j_graphrag.embeddings import OpenAIEmbeddings
 from neo4j_graphrag.generation import GraphRAG
 from neo4j_graphrag.llm import AnthropicLLM
 from neo4j_graphrag.retrievers import HybridCypherRetriever
-from neo4j_graphrag.types import RetrieverResultItem
+from neo4j_graphrag.types import RetrieverResult, RetrieverResultItem
+from langsmith import traceable
+from langsmith.wrappers import wrap_anthropic
 
 from agent.state import SuperAgentState
 from agent.utils import reply
@@ -86,10 +88,26 @@ def _format_article(record: neo4j.Record) -> RetrieverResultItem:
         metadata={"articleId": record["articleId"], "ruleIds": rule_ids, "score": record["score"]},
     )
 
+# Helper method for processing output sent to Langsmith for tracing
+def _as_documents(result: RetrieverResult) -> dict:
+    """How the search appears in LangSmith: the retrieved articles as documents (a retriever run)."""
+    return {
+        "documents": [
+            {"page_content": item.content, "type": "Document", "metadata": item.metadata or {}}
+            for item in result.items
+        ]
+    }
+
 
 @lru_cache(maxsize=1)
 def _get_rag() -> GraphRAG:
-    """Build the retriever + GraphRAG pipeline once, on first actual use."""
+    """Build the retriever + GraphRAG pipeline once, on first actual use.
+
+    neo4j-graphrag is not LangChain, so LangSmith does not trace its steps on its own. Two are
+    traced by hand, as children of the graph_rag_chain run: the search (`kb_search`, a retriever
+    run showing the 5 articles) and Claude's answer (`kb_answer`, the full prompt with the articles
+    and the reply). A judge of whether the answer is grounded in the articles reads `kb_answer`.
+    """
     retriever = HybridCypherRetriever(
         driver=get_driver(),
         vector_index_name="kb_article_embedding",
@@ -98,12 +116,16 @@ def _get_rag() -> GraphRAG:
         embedder=OpenAIEmbeddings(model="text-embedding-3-small"),
         result_formatter=_format_article,
     )
+    retriever.search = traceable(name="kb_search", run_type="retriever", process_outputs=_as_documents)(
+        retriever.search
+    )
     # thinking disabled: neo4j-graphrag only accepts a reply whose first block is text, and this
     # model sometimes opens with a thinking block, which made the call fail.
     llm = AnthropicLLM(
         model_name="claude-sonnet-5",
         model_params={"max_tokens": _MAX_ANSWER_TOKENS, "thinking": {"type": "disabled"}},
     )
+    llm.client = wrap_anthropic(llm.client, chat_name="kb_answer")
     return GraphRAG(retriever=retriever, llm=llm)
 
 
@@ -124,6 +146,7 @@ def graph_rag_chain(state: SuperAgentState) -> dict:
     )
 
     citations: list[str] = []
+    # Append article ids and rules id to citations
     if response.retriever_result is not None:
         for item in response.retriever_result.items:
             metadata = item.metadata or {}
