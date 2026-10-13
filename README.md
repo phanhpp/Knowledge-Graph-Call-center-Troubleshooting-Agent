@@ -106,6 +106,19 @@ Checked (PROC-001 "Customer cannot activate roaming"):
 
 
 
+## What's in the citations
+
+Every reply carries `citations`: the IDs of what the answer came from. They depend on which path answered:
+
+
+| Reply comes from                                                                          | Citations                                                                                              | Example                               | Who produces them                                                                                      |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Troubleshooting walk** (`resolve`)                                                      | the action given, then the rules governing it                                                          | `ACT-015, R012`; `ACT-027` (no rules) | code: the action ID from the step's `HAS_ACTION` link, the rule IDs via `GOVERNED_BY`, read from Neo4j |
+| **Knowledge base** (`graph_rag_chain`)                                                    | each retrieved article, followed by the rules it cites (a rule cited by several articles appears once) | `KB-006, R004, KB-005, R005, R013, …` | code: from the search results, read from Neo4j                                                         |
+| **Explain**                                                                               | nothing                                                                                                | —                                     | an explanation is not a new source; the answer it explains already showed its sources                  |
+| **Fixed messages** (unknown customer, Neo4j down, "Which customer…?", no procedure found) | nothing                                                                                                | —                                     | —                                                                                                      |
+
+
 ## GraphRAG Pipeline Architecture
 
 ```markdown
@@ -184,13 +197,13 @@ Procedure PROC-001  "Customer cannot activate roaming"
 ### Error handling
 
 
-| Case                    | When it happens                                                                                                                                                    | What is returned                                                                                                                                                 | Where                                                    |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Message B**           | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
-| **NO on the last step** | The procedure was found and every step was checked. The last step's condition is false.                                                                            | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
-| **Unknown customer ID** | The message names a customer ID that is not in the CRM. Checked first, before any paid model call; a message naming no customer is not checked. | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why) | `check_customer`, `agent/supervisor.py` |
-| **No customer for troubleshooting** | A troubleshooting message, and no customer named yet in this conversation. A general question needs none. | "Which customer is this about? Start your message with their customer ID, …" (`error` says why) | `load_crm`, `agent/supervisor.py` |
-| **Neo4j down**          | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call.                                                | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason)   | `check_neo4j`, `agent/supervisor.py`                     |
+| Case                                | When it happens                                                                                                                                                    | What is returned                                                                                                                                                 | Where                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **Message B**                       | The agent can't find the matching procedure. For example, `match_procedure` returned an ID the graph does not have (the graph and `procedures.json` have drifted). | "I couldn't find a matching procedure for this request. Try rephrasing, or I can search the knowledge base instead." (`citations` is empty and `error` says why) | `handle_fetch_error`, `agent/procedural_executor.py:109` |
+| **NO on the last step**             | The procedure was found and every step was checked. The last step's condition is false.                                                                            | fall back to 'action_if_false' defined for each procedure                                                                                                        | `resolve`, `agent/procedural_executor.py:162`            |
+| **Unknown customer ID**             | The message names a customer ID that is not in the CRM. Checked first, before any paid model call; a message naming no customer is not checked.                    | "I couldn't find a customer with ID 'CUST-9999'. Check the customer ID and try again." (`citations` is empty and `error` says why)                               | `check_customer`, `agent/supervisor.py`                  |
+| **No customer for troubleshooting** | A troubleshooting message, and no customer named yet in this conversation. A general question needs none.                                                          | "Which customer is this about? Start your message with their customer ID, …" (`error` says why)                                                                  | `load_crm`, `agent/supervisor.py`                        |
+| **Neo4j down**                      | Neo4j is not reachable (not started, wrong password). Checked right after the customer, before any paid model call.                                                | "The knowledge graph is offline, so I can't answer right now. Ask whoever runs the agent to start Neo4j, then try again." (`error` gives the technical reason)   | `check_neo4j`, `agent/supervisor.py`                     |
 
 
 
@@ -310,7 +323,7 @@ A message naming a customer ID is checked (it must exist) and that customer beco
  message 5  "CUST-1001 why?"                                -> back to CUST-1001: explain from CUST-1001's messages
 ```
 
-`explain` gives Claude the last 10 messages, each labelled with its customer (`[CUST-1001] ...`, `[reply about CUST-1001] ...`) or as general (`[general] ...`, `[reply, general] ...`), with each reply's sources, plus the wording of the rules those messages cite, fetched from Neo4j. A troubleshooting reply already contains the action, why the walk stopped, and every step with its value, so the conversation is the whole record. If the question names a customer, Claude answers only about that customer; if it names none, it answers about the earlier answer it refers to, usually the latest. Either way it is told never to claim an earlier answer was wrong. Without the labels, an answer for CUST-1005 once looked like CUST-1001's, and Claude "corrected" an answer it never gave. An answer records what was true when it was given. It is not a cache: every new question re-checks the customer's data (see `docs/lessons.md`).
+`explain` gives Claude the last 10 messages, each labelled with its customer (`[CUST-1001] ...`, `[reply about CUST-1001] ...`) or as general (`[general] ...`, `[reply, general] ...`), with each reply's sources, plus the wording of the rules those messages cite, fetched from Neo4j. A troubleshooting reply already contains the action, why the walk stopped, and every step with its value, so the conversation is the whole record. If the question names a customer, Claude answers only about that customer; if it names none, it answers about the earlier answer it refers to, usually the latest. Either way it is told never to claim an earlier answer was wrong. Without the labels, an answer for CUST-1005 once looked like CUST-1001's, and Claude "corrected" an answer it never gave. An answer records what was true when it was given. It is not a cache: every new question re-checks the customer's data, because the CRM, not an earlier answer, is the current truth.
 
 Without a checkpointer every call is a single question (that is what `/agent` and `graph.invoke(...)` do). The Slack bot saves conversations in `checkpoints.db` (`config.get_checkpointer()`, SQLite).
 
@@ -365,15 +378,12 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 - `COND-027`/`COND-028` (fraud, refund intent) have no structured field to check yet. Either add booleans to `recent_tickets` (e.g. `suspected_fraud`, `refund_requested`), or keep them as the `ticket_text` LLM fallback — structured field first, LLM only when it's missing/generic.
 - HITL fallback: when the LLM is low-confidence, pause with `interrupt()` and ask the consultant instead of guessing, rather than silently treating it as NO. Needs the walk compiled with a real checkpointer (currently `checkpointer=False`, which blocks interrupts) and a Slack DM resume path that checks whether a conversation is paused before starting a new turn.
 
-**Trimming long conversations** — not done. Every Jev and Claude call sends the whole conversation, which grows when one conversation covers several customers. Use `trim_messages` (`langchain_core.messages`) on what each call is given, not on what is saved. `SummarizationMiddleware` does not fit: like all middleware it only runs inside `create_agent`, and the supervisor is a plain `StateGraph`.
+**Saved conversations grow forever** — not handled. No model call needs trimming: the Jev calls and the knowledge-base search get only the latest message, `explain` gets the last 10, and the ticket reader gets only the ticket. But the saved conversation in `checkpoints.db` has no limit, and grows faster than the message count, because LangGraph saves the state after every step (a 4-turn DM had 26 checkpoints). Options: end a conversation after inactivity (e.g. 2 hours) and delete its old checkpoints, or keep only the latest checkpoint per conversation.
 
-**Phase 7B — Eval & Observability** (`docs/proposed_plan.md`, not started):
+**Phase 7B — Eval & Observability** — not started, except that the knowledge-base path is now traced (`kb_search`: the 5 retrieved articles; `kb_answer`: Claude's prompt and answer).
 
-- Two LangSmith datasets: troubleshooting (query + customer_id → expected procedure/action) and open-ended (question → expected article/rule IDs).
-- Code evaluators: `procedure_resolved`, `correct_path_routed`, `citation_present`, `no_hallucinated_rule`.
-- LLM-judge evaluators (trend tracking, non-blocking): `resolution_relevance`, `citation_faithfulness`, `policy_compliance`.
-- LangSmith alerts: tool error rate, Neo4j returning null, a procedure not terminating, Graph RAG with no citations.
-- `baselines.json` seeded from 20-30 real queries, flag anything over 3x the median latency.
+- **Offline:** golden datasets, run as LangSmith experiments: routing (case messages and policy-question twins per procedure), the walk (every procedure × customer, generated from `data/`), tickets, knowledge-base questions (with articles that must be retrieved), multi-turn conversations, and adversarial messages. Deterministic evaluators gate merges (routing accuracy, walk matches the data, citations exist, retrieval recall@5, customer handling); LLM judges are tracked over time (grounding, completeness, explain quality).
+- **Online:** Jev decision-model evaluators on live traces, set up in the LangSmith UI: `explain` quality on the explain call (false corrections, customer focus, grounding, rule vs condition) and knowledge-base grounding on `kb_answer`; plus code evaluators and alerts (errors, Neo4j, routing drift, latency).
 - No `eval/` directory exists yet.
 
 **Slack** — never run against a real workspace; needs your tokens.
@@ -392,7 +402,7 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 │
 ├── data/                       synthetic JSON, the source of truth
 │   ├── crm_records.json        60 customers
-│   ├── conditions.json         the yes/no checks (field, chain or ticket; see docs/data_schema.md)
+│   ├── conditions.json         the yes/no checks (field, chain or ticket)
 │   ├── actions.json            what to tell the consultant to do
 │   ├── procedures.json         20 procedures: steps that point at conditions and actions
 │   ├── rules.json              policies governing actions
@@ -430,14 +440,12 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 │   ├── formatting.py           turns an answer into a Slack message, plus fixed messages
 │   └── threads.py              which saved conversation a DM belongs to
 │
-├── tests/
-│   ├── test_*.py               unit and integration tests (validate, condition evaluator, executor,
-│   │                           supervisor, graph RAG)
-│   ├── slack_bot/              Slack tests, with fake Slack events (no network)
-│   └── e2e/                    full-graph tests with real Neo4j and model calls, grouped as
-│                               troubleshooting/, open_ended/, follow_ups/ and errors/
-│
-└── docs/                       planning docs and lessons.md (git-ignored: local only)
+└── tests/
+    ├── test_*.py               unit and integration tests (validate, condition evaluator, executor,
+    │                           supervisor, graph RAG)
+    ├── slack_bot/              Slack tests, with fake Slack events (no network)
+    └── e2e/                    full-graph tests with real Neo4j and model calls, grouped as
+                                troubleshooting/, open_ended/, follow_ups/ and errors/
 ```
 
 `checkpoints.db` (saved conversations) and `.env` are created locally and git-ignored.
