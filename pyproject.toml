@@ -13,6 +13,9 @@ dependencies = [
     "slack-bolt>=1.21.0",
     "langgraph-checkpoint-sqlite>=3.1.1",
     "langchain-typesafe>=0.0.1a3",
+    # The LangGraph server ships starlette, but agent/http_app.py and agent/routes/ import it
+    # directly, so it is declared rather than relied on.
+    "starlette",
 ]
 # No deepagents — Phase 4/5 use plain LangGraph nodes, not the deepagents
 # ReAct/agent abstraction (see agent/procedural_executor.py's module
@@ -20,7 +23,19 @@ dependencies = [
 # its own, so there is no saved conversation state to keep.
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# Local only: the deployed image already has the server, and the CLI is a development tool.
+dev = ["pytest>=8.0", "langgraph-cli[inmem]", "langgraph-api"]
+
+# LangSmith Deployment (`"source": {"kind": "uv"}` in langgraph.json) needs an installable
+# package. Packages are listed explicitly: one left out is simply missing from the deployed
+# image, and only the deploy finds out. The server needs these; slack_bot runs separately.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["agent", "agent.routes", "mock_crm", "etl"]
+py-modules = ["config"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
