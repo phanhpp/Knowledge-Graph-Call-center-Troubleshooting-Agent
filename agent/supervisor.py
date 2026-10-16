@@ -44,7 +44,7 @@ agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 import logging
 import re
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
