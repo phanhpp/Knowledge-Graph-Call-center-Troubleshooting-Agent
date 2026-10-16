@@ -119,6 +119,8 @@ Every reply carries `citations`: the IDs of what the answer came from. They depe
 | **Fixed messages** (unknown customer, Neo4j down, "Which customer…?", no procedure found) | nothing                                                                                                | —                                     | —                                                                                                      |
 
 
+
+
 ## GraphRAG Pipeline Architecture
 
 ```markdown
@@ -273,6 +275,26 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
 
 
 
+## Using it in Slack
+
+Start the bot with `uv run python -m slack_bot`. It needs Neo4j, the model keys and the two Slack tokens (setup: `slack_bot/slack_setup.md`). Then, in Slack:
+
+
+|                            | `/agent` command                                    | Direct message to the bot                                 |
+| -------------------------- | --------------------------------------------------- | --------------------------------------------------------- |
+| Use it for                 | one quick question                                  | a conversation with follow-ups                            |
+| Example                    | `/agent CUST-1005 customer cannot activate roaming` | `CUST-1005 customer cannot activate roaming`, then `why?` |
+| Remembers earlier messages | no, every command starts from zero                  | yes, saved in `checkpoints.db`                            |
+| Who sees the answer        | only you                                            | you                                                       |
+
+
+- **Name the customer** when the message is about one. The ID can be anywhere in the text, in any case (`cust-1005` works). A general question ("what is the SIM replacement fee?") needs none. A troubleshooting message with no customer gets "Which customer is this about?".
+- **In a DM**, follow-ups about the same customer need no ID. Naming another ID switches customer and keeps the conversation. A thread inside the DM is a separate conversation, so you can work two cases side by side.
+- Every answer ends with its sources, e.g. `_Sources: ACT-015, R012_`.
+- **Who can use it:** members of the private channel in `SLACK_MEMBERS_CHANNEL`, plus any user IDs in `SLACK_ALLOWED_USERS`. With neither set, anyone in the workspace can.
+
+More in `slack_bot/README.md`.
+
 ## **Slack** (how a command reaches the agent)
 
  Slack never talks to Neo4j or the agent directly. Only the bot process talks to Slack, and it calls the agent as a normal Python function:
@@ -306,26 +328,35 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
 
 A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a thread inside it) is the `thread_id`, and the graph is compiled with the SQLite checkpointer, so the messages (each stamped with its customer) and the current customer are saved between messages. A message naming a different customer switches to them; the conversation is kept.
 
-## Follow-up questions
+## Evaluation
 
-The agent is compiled with a checkpointer, and each conversation has its own `thread_id`, so the state is saved between messages:
+LangSmith scores every real conversation automatically. Setup: `eval/eval_plan.md`.
 
-- `messages`: the whole conversation. A consultant message is stamped with the customer it is about (`additional_kwargs["customer_id"]`): the ID it names (stamped by the Slack bot), or the current customer for a troubleshooting follow-up naming none (stamped by `load_crm`). An unstamped message was a general question. Each reply belongs to the consultant message before it;
-- `customer_id`: the customer currently being discussed (the last ID named).
+### Code checks: rules that must always hold
 
-A message naming a customer ID is checked (it must exist) and that customer becomes the current one. A message naming none is not checked: a general question needs no customer, and a troubleshooting follow-up uses the current customer (with none yet, the agent asks which one). The CRM record is loaded only for troubleshooting. One conversation can cover several customers and general questions; naming a different customer switches to them and keeps everything. The walk's full `step_trace` stays inside the procedure subgraph and is never saved (see `agent/state.py`). A third path, `explain`, answers questions about an earlier answer:
+Score: **1** = OK, **0** = broken.
 
-```
- message 1  "CUST-1001 customer cannot activate roaming"   -> procedure walk -> reply: ACT-015, R012
- message 2  "what does that rule say?"    (no customer ID) -> explain: R012's wording from Neo4j
- message 3  "why did it end up at Tier 2?"                  -> explain: the steps and values in the reply to message 1
- message 4  "CUST-1005 customer cannot activate roaming"   -> switch to CUST-1005, new walk
- message 5  "CUST-1001 why?"                                -> back to CUST-1001: explain from CUST-1001's messages
-```
+| Check | What it checks |
+|---|---|
+| `citations_exist` | Every source the reply cites (e.g. `ACT-015`, `R012`, `KB-006`) really exists. |
+| `walk_has_checklist` | A troubleshooting reply shows why, and the steps it checked. |
+| `troubleshooting_customer_handled` | Troubleshooting runs only when the customer is known; otherwise the bot asks "Which customer?". |
 
-`explain` gives Claude the last 10 messages, each labelled with its customer (`[CUST-1001] ...`, `[reply about CUST-1001] ...`) or as general (`[general] ...`, `[reply, general] ...`), with each reply's sources, plus the wording of the rules those messages cite, fetched from Neo4j. A troubleshooting reply already contains the action, why the walk stopped, and every step with its value, so the conversation is the whole record. If the question names a customer, Claude answers only about that customer; if it names none, it answers about the earlier answer it refers to, usually the latest. Either way it is told never to claim an earlier answer was wrong. Without the labels, an answer for CUST-1005 once looked like CUST-1001's, and Claude "corrected" an answer it never gave. An answer records what was true when it was given. It is not a cache: every new question re-checks the customer's data, because the CRM, not an earlier answer, is the current truth.
+### AI judge (Jev): reads a reply and answers one question about it
 
-Without a checkpointer every call is a single question (that is what `/agent` and `graph.invoke(...)` do). The Slack bot saves conversations in `checkpoints.db` (`config.get_checkpointer()`, SQLite).
+Score: **0** = fine, **higher** = worse.
+
+| Reply | Check | Question | Score |
+|---|---|---|---|
+| Follow-up answer ("why?") | `explain_off_target` | Did it fail to answer the question? | 0 answered, 1 partly, 2 not at all |
+| | `explain_made_up` | Did it make up a fact? | 0 no … 1 yes |
+| | `explain_contradicts_earlier` | Did it contradict an earlier answer? | 0 no … 1 yes |
+| Knowledge-base answer | `kb_unsupported_claim` | Did it say something the articles don't? | 0 no … 1 yes |
+| | `kb_unhelpful` | Is it hard to use on a live call? | 0 usable, 1 partly, 2 not usable |
+| Articles the search found | `retrieval_unrelated_articles` | How many of the 5 are off-topic? | 0 to 5 (3–4 is normal) |
+| | `retrieval_answer_missing` | Is the answer missing from all of them? | 0 no … 1 yes |
+
+A "0 no … 1 yes" score is how sure Jev is that the answer is yes: near 0 means no, near 1 means yes, around 0.5 means it isn't sure.
 
 ## Run it
 
@@ -360,7 +391,7 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 
 - **Works:** the data, validation, the Neo4j load, the mock CRM, the troubleshooting path, the open-ended path, and follow-up questions in a saved conversation.
 - **Routing uses Jev** and passes the end-to-end tests live, including the fee question the old Claude classifier misrouted. The thresholds are not tuned yet (see TODO below).
-- **Slack bot:** `/agent` and direct messages are written and tested with fake Slack events, but never run against a real workspace — that needs your Slack tokens (see `slack_bot/slack_setup.md`).
+- **Slack bot:** `/agent` and direct messages work in a real workspace, and are also tested with fake Slack events (see "Using it in Slack").
 - **Not built:** Microsoft Teams (needs a public HTTPS endpoint and an Azure Bot registration, no Socket Mode equivalent). Follow-ups can explain and search, but cannot take new facts ("actually roaming is on"): conditions are checked against the CRM data only.
 
 
@@ -384,9 +415,8 @@ Claude features need `ANTHROPIC_API_KEY`. Embeddings need `OPENAI_API_KEY`. Rout
 
 - **Offline:** golden datasets, run as LangSmith experiments: routing (case messages and policy-question twins per procedure), the walk (every procedure × customer, generated from `data/`), tickets, knowledge-base questions (with articles that must be retrieved), multi-turn conversations, and adversarial messages. Deterministic evaluators gate merges (routing accuracy, walk matches the data, citations exist, retrieval recall@5, customer handling); LLM judges are tracked over time (grounding, completeness, explain quality).
 - **Online:** Jev decision-model evaluators on live traces, set up in the LangSmith UI: `explain` quality on the explain call (false corrections, customer focus, grounding, rule vs condition) and knowledge-base grounding on `kb_answer`; plus code evaluators and alerts (errors, Neo4j, routing drift, latency).
-- No `eval/` directory exists yet.
 
-**Slack** — never run against a real workspace; needs your tokens.
+
 
 ## File structure
 
