@@ -66,6 +66,24 @@ def test_unknown_customer_is_404(client):
     assert "CUST-9999" in response.json()["error"]
 
 
+# --- sources ---
+
+
+def test_source_returns_the_full_text(client):
+    response = client.get("/sources/KB-006")
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "SIM Replacement Process and Fees"
+    assert len(response.json()["text"]) > 300
+
+
+def test_unknown_source_is_404(client):
+    response = client.get("/sources/KB-999")
+
+    assert response.status_code == 404
+    assert "KB-999" in response.json()["error"]
+
+
 # --- feedback ---
 
 

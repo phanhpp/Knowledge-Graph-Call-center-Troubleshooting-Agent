@@ -3,7 +3,7 @@
 from langsmith import tracing_context
 from langsmith.run_helpers import traceable
 
-from agent.sources import ARTICLE_EXCERPT_CHARS, sources_for
+from agent.sources import ARTICLE_EXCERPT_CHARS, full_source, sources_for
 from agent.utils import reply
 from etl.io_utils import load_json
 
@@ -77,3 +77,34 @@ def test_reply_inside_a_traced_run_records_the_root_run():
         turn(langsmith_extra={"on_end": lambda run: seen.setdefault("root", str(run.id))})
 
     assert seen["run_id"] == seen["root"]
+
+
+# --- full_source: what expanding a source shows ---
+
+
+def test_full_source_has_the_whole_article():
+    """The saved reply has only the opening; expanding fetches all of it."""
+    article = next(a for a in load_json("kb_articles.json") if a["article_id"] == "KB-006")
+    full = full_source("KB-006")
+
+    assert full["text"] == article["content"]
+    assert len(full["text"]) > len(sources_for(["KB-006"])[0]["text"])
+    assert full["label"] == article["category"]
+
+
+def test_full_source_gives_a_rules_type_and_an_actions_category():
+    assert full_source("R001")["label"] == "amount limit"
+    assert full_source("R012")["text"] == sources_for(["R012"])[0]["text"]
+    assert full_source("ACT-015")["kind"] == "action" and full_source("ACT-015")["label"]
+
+
+def test_full_source_of_an_unknown_id_is_none():
+    assert full_source("NOPE-1") is None
+
+
+def test_every_id_in_the_data_has_a_full_source():
+    ids = [a["action_id"] for a in load_json("actions.json")]
+    ids += [r["rule_id"] for r in load_json("rules.json")]
+    ids += [k["article_id"] for k in load_json("kb_articles.json")]
+
+    assert all(full_source(i) is not None for i in ids)
