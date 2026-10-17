@@ -2,7 +2,7 @@
 
 import { useStream } from "@langchain/react";
 import { AIMessage } from "langchain";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { CustomerCard } from "@/components/CustomerCard";
 import { MessageRow } from "@/components/MessageRow";
@@ -39,7 +39,23 @@ export function Chat({
   onNewThread: () => void;
 }) {
   const [apiUrl] = useState(resolveAgentUrl);
-  const stream = useStream<AgentState>({ apiUrl, assistantId: ASSISTANT_ID, threadId, onThreadId });
+  // A failed agent call (the proxy answering 5xx, or the network) sets neither stream.error nor a
+  // rejected submit() in @langchain/react 1.2.4: the page would show "Working on it…" forever. So the
+  // hook's requests go through this fetch, which notices. A 401 means the sign-in cookie expired.
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const agentFetch = useCallback<typeof fetch>(async (input, init) => {
+    let response: Response;
+    try {
+      response = await fetch(input, init);
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    if (response.status === 401) window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    else if (response.status >= 500) setAgentError(`the agent server answered ${response.status}`);
+    return response;
+  }, []);
+  const stream = useStream<AgentState>({ apiUrl, assistantId: ASSISTANT_ID, threadId, onThreadId, fetch: agentFetch });
   const messages = stream.messages;
   // Citations, sources and run ids come from the thread's saved state: streamed replies arrive
   // without them (lib/use-saved-kwargs.ts).
@@ -66,7 +82,10 @@ export function Chat({
     const trimmed = body.trim();
     if (!trimmed || stream.isLoading) return;
     // Only the stream's messages are rendered: useStream adds this one optimistically.
-    void stream.submit({ messages: [humanMessage(trimmed, customerId)] });
+    setAgentError(null);
+    stream.submit({ messages: [humanMessage(trimmed, customerId)] }).catch((error: unknown) => {
+      setAgentError(error instanceof Error ? error.message : String(error));
+    });
     setText("");
     setSelectedId(null);
     setHighlight(null);
@@ -130,15 +149,18 @@ export function Chat({
             />
           ))}
 
-          {stream.isLoading && (
+          {stream.isLoading && !agentError && (
             <p className="text-sm text-text-tertiary" role="status">
               <span className="animate-[blink_1.2s_infinite]">Working on it…</span>
             </p>
           )}
 
-          {stream.error != null && (
+          {(stream.error != null || agentError) && (
             <p role="alert" className="rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
-              Couldn&apos;t reach the agent. {stream.error instanceof Error ? stream.error.message : String(stream.error)}
+              Couldn&apos;t reach the agent. Try again in a moment.{" "}
+              <span className="text-text-tertiary">
+                ({agentError ?? (stream.error instanceof Error ? stream.error.message : String(stream.error))})
+              </span>
             </p>
           )}
         </section>
