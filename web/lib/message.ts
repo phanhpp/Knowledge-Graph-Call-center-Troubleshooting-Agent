@@ -54,6 +54,7 @@ export function runIdOf(message: WithKwargs): string | undefined {
 export function savedKwargs(stateMessages: readonly unknown[] | undefined): Map<string, Record<string, unknown>> {
   const byId = new Map<string, Record<string, unknown>>();
   for (const message of stateMessages ?? []) {
+    if (!message || typeof message !== "object") continue; // the state is server data: don't trust its shape
     const m = message as { id?: unknown; additional_kwargs?: unknown };
     if (typeof m.id === "string" && m.additional_kwargs && typeof m.additional_kwargs === "object") {
       byId.set(m.id, m.additional_kwargs as Record<string, unknown>);
