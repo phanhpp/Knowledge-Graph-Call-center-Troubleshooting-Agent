@@ -415,7 +415,10 @@ def explain_answer(state: SuperAgentState) -> dict:
         "anything else a rule.\n\n"
         f"Rules cited in the conversation:\n{rules or '(none)'}"
     )
-    llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"})
+    # "nostream": LangGraph leaves this call's tokens out of the message stream. The reply a client
+    # shows is the one this node returns via reply() (with its sources and run id); without the tag the
+    # web app showed the explanation twice, once as Claude's streamed tokens and once as the reply.
+    llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"}, tags=["nostream"])
     response = llm.invoke([system, *history])
     return reply(_without_label(str(response.text)))
 
