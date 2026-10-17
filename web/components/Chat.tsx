@@ -6,14 +6,20 @@ import { useCallback, useMemo, useState } from "react";
 
 import { CustomerCard } from "@/components/CustomerCard";
 import { MessageRow } from "@/components/MessageRow";
+import { ResizeHandle } from "@/components/ResizeHandle";
 import { SourcesPanel } from "@/components/SourcesPanel";
 import { ThreadList } from "@/components/ThreadList";
 import { ASSISTANT_ID, resolveAgentUrl } from "@/lib/agent";
 import { citationsOf, humanMessage, normalizeCustomerId, withSavedKwargs } from "@/lib/message";
+import { usePanelSize } from "@/lib/panel-size";
 import type { AgentState } from "@/lib/state";
 import { useCustomer } from "@/lib/use-customer";
 import { useFeedback } from "@/lib/use-feedback";
 import { useSavedKwargs } from "@/lib/use-saved-kwargs";
+
+// The side panel's width and the customer card's height: dragged by the user, kept in this browser.
+const PANEL = { key: "super-agent:panel-width", initial: 320, min: 260, max: 900 };
+const CARD = { key: "super-agent:card-height", initial: 300, min: 96, max: 700 };
 
 const EXAMPLES: { customer: string; text: string }[] = [
   { customer: "CUST-1001", text: "customer cannot activate roaming" },
@@ -74,6 +80,10 @@ export function Chat({
   // The reply whose sources the panel shows: the one clicked, else the latest that cites something.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  // The source shown in full in the Sources panel (one at a time), or null.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [panelWidth, setPanelWidth, resetPanelWidth] = usePanelSize(PANEL.key, PANEL.initial, PANEL.min, PANEL.max);
+  const [cardHeight, setCardHeight, resetCardHeight] = usePanelSize(CARD.key, CARD.initial, CARD.min, CARD.max);
   const latestCiting = [...messages].reverse().find((m) => AIMessage.isInstance(m) && citationsOf(withSavedKwargs(m, saved)).length > 0);
   const selectedMessage = messages.find((m) => m.id === selectedId) ?? latestCiting ?? null;
   const selected = selectedMessage ? withSavedKwargs(selectedMessage, saved) : null;
@@ -89,6 +99,7 @@ export function Chat({
     setText("");
     setSelectedId(null);
     setHighlight(null);
+    setExpandedId(null);
   }
 
   return (
@@ -145,6 +156,7 @@ export function Chat({
               onCite={(id) => {
                 setSelectedId(message.id ?? null);
                 setHighlight(id);
+                setExpandedId(id);
               }}
             />
           ))}
@@ -205,9 +217,25 @@ export function Chat({
         </form>
       </main>
 
-      <aside className="hidden w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border bg-surface-secondary p-4 lg:flex">
-        <CustomerCard lookup={customer} />
-        <SourcesPanel message={selected} highlight={highlight} />
+      <div className="hidden lg:flex">
+        <ResizeHandle label="Resize the side panel" grow="left" value={panelWidth} min={PANEL.min} max={PANEL.max} onResize={setPanelWidth} onReset={resetPanelWidth} />
+      </div>
+      <aside style={{ width: panelWidth }} className="hidden max-w-[60vw] shrink-0 flex-col border-l border-border bg-surface-secondary p-4 lg:flex">
+        <div style={{ height: cardHeight }} className="shrink-0 overflow-y-auto" data-testid="customer-card-area">
+          <CustomerCard lookup={customer} />
+        </div>
+        <ResizeHandle label="Resize the customer card" grow="down" value={cardHeight} min={CARD.min} max={CARD.max} onResize={setCardHeight} onReset={resetCardHeight} />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <SourcesPanel
+            message={selected}
+            highlight={highlight}
+            expandedId={expandedId}
+            onToggle={(id) => {
+              setHighlight(id);
+              setExpandedId((current) => (current === id ? null : id));
+            }}
+          />
+        </div>
       </aside>
     </div>
   );

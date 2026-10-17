@@ -43,6 +43,15 @@ export const WALK_REPLY = WALK_STATE.values.messages[1];
 const CUSTOMER = lastBody((e) => e.path.endsWith("/customers/CUST-1001"));
 const COMMAND_OK = lastBody((e) => e.path.endsWith("/commands"));
 
+/* Full sources (GET /sources/{id}), built from the repo's data files the same way agent/sources.py
+   full_source builds them, so expanding a source shows the real text. */
+const DATA = resolve(__dirname, "../../data");
+const readData = (file: string) => JSON.parse(readFileSync(resolve(DATA, file), "utf8")) as Record<string, string>[];
+export const FULL_SOURCES = new Map<string, { id: string; kind: string; title: string; text: string; label: string }>();
+for (const a of readData("actions.json")) FULL_SOURCES.set(a.action_id, { id: a.action_id, kind: "action", title: a.text, text: "", label: a.category });
+for (const r of readData("rules.json")) FULL_SOURCES.set(r.rule_id, { id: r.rule_id, kind: "rule", title: r.description, text: r.detail, label: r.constraint_type.replace(/_/g, " ") });
+for (const k of readData("kb_articles.json")) FULL_SOURCES.set(k.article_id, { id: k.article_id, kind: "article", title: k.title, text: k.content, label: k.category });
+
 /* The thread list: just the two recorded conversations, newest first. */
 const THREADS = [KB_THREAD, WALK_THREAD].map((id) => ({
   thread_id: id,
@@ -89,6 +98,10 @@ export async function mockAgent(page: Page, options: MockOptions = {}): Promise<
     }
     if (path.endsWith("/customers/CUST-1001")) return json(CUSTOMER);
     if (path.includes("/customers/")) return json({ error: "no customer with that ID" }, 404);
+    if (path.includes("/sources/")) {
+      const found = FULL_SOURCES.get(decodeURIComponent(path.split("/").at(-1) ?? ""));
+      return found ? json(found) : json({ error: "no source with that ID" }, 404);
+    }
     if (path.endsWith("/votes")) return json({ votes: options.recordedVotes ?? {} });
     if (path.includes("/feedback/") && request.method() === "POST") {
       votes.push(JSON.parse(request.postData() ?? "{}"));
