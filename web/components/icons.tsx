@@ -1,4 +1,4 @@
-/* Thumb icons for FeedbackControls (from the hitl-py web app). */
+/* Thumb icons for FeedbackControls (from an earlier human-in-the-loop project of mine). */
 
 export function ThumbsUpIcon({ className, filled }: { className?: string; filled?: boolean }) {
   return (

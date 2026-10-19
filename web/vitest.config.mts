@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 
 /**
  * Unit tests for lib/: no browser, no agent server, no API key. Every test builds its own inputs
- * or stubs `fetch`. (Setup from the hitl-py web app.)
+ * or stubs `fetch`. (Setup from an earlier human-in-the-loop project of mine.)
  *
  * The `@/` alias is repeated here: Vitest doesn't read tsconfig's `paths`.
  */

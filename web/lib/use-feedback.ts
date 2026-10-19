@@ -2,7 +2,7 @@
 
 /*
  * Thumbs up/down on a reply, recorded against the LangSmith run that produced it.
- * (From the hitl-py web app; there the run ids sat in a separate state list, here each reply
+ * (From an earlier human-in-the-loop project of mine; there the run ids sat in a separate state list, here each reply
  * carries its own.)
  *
  * The browser can't work out run ids. The agent writes each reply's run id onto the reply itself

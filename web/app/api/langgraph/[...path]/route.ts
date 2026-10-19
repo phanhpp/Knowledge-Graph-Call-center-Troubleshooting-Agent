@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { AUTH_COOKIE, isAuthorized } from "@/lib/auth";
 
-// Proxy between the browser and the LangGraph agent server (copied from the hitl-py web app).
+// Proxy between the browser and the LangGraph agent server (copied from an earlier human-in-the-loop project of mine).
 // A next.config rewrite cannot add the X-Api-Key a hosted agent needs, which is why
 // this is a route handler.
 

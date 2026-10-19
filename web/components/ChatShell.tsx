@@ -20,7 +20,7 @@ function threadToUrl(id: string | null) {
 
 /**
  * Keeps the open conversation in the URL and rebuilds the chat when it changes.
- * (The rebuild rule is from the hitl-py web app.)
+ * (The rebuild rule is from an earlier human-in-the-loop project of mine.)
  *
  * Two kinds of change, handled differently:
  *   - the user opens another conversation or starts a new one: rebuild <Chat>, or it keeps

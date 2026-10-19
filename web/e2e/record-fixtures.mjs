@@ -1,5 +1,5 @@
 /*
- * Records REAL agent traffic once, so the e2e fixtures are not guesses. (Pattern from the hitl-py web app.)
+ * Records REAL agent traffic once, so the e2e fixtures are not guesses. (Pattern from an earlier human-in-the-loop project of mine.)
  *
  * Run it by hand, with both servers up (`uv run langgraph dev` in the repo root, `pnpm dev` here):
  *

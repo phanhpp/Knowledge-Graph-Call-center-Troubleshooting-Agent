@@ -6,7 +6,7 @@ import type { Page, Route } from "@playwright/test";
 /*
  * A fake agent server, built from traffic recorded off the real one (e2e/record-fixtures.mjs). Every
  * shape here (the saved state, the run.start command, the thread list) was copied from an actual
- * run, not invented. (Pattern from the hitl-py web app.)
+ * run, not invented. (Pattern from an earlier human-in-the-loop project of mine.)
  *
  * What it serves: each conversation's SAVED state. The live event stream is held open and silent,
  * because the page takes citations, sources and run ids from the saved state anyway

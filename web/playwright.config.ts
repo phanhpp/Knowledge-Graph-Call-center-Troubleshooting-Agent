@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * End-to-end tests against a FAKE agent. (Setup from the hitl-py web app.)
+ * End-to-end tests against a FAKE agent. (Setup from an earlier human-in-the-loop project of mine.)
  *
  * Every agent call is intercepted and answered from fixtures recorded off the real server
  * (e2e/record-fixtures.mjs), so these need no agent, no API key and no model call, and give the

@@ -1,5 +1,5 @@
 /**
- * Browser-side agent config. (From the hitl-py web app.)
+ * Browser-side agent config. (From an earlier human-in-the-loop project of mine.)
  *
  * window is only read inside a function, so this module is safe to import anywhere;
  * only client components may call resolveAgentUrl().

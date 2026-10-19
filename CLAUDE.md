@@ -4,11 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This repository currently contains only planning documents in `docs/` — no code, build system, package manifest, or tests exist yet. There is nothing to build, lint, or run. When implementation begins, update this file with actual commands (dependency install, ETL scripts, test runner) rather than guessing at them now.
+Implemented and deployed: the agent (`agent/`), the data pipeline (`data/`, `etl/`), the mock CRM, a Slack bot (`slack_bot/`), a Next.js web app (`web/`), online evaluators (`eval/`), and LangGraph Server serving (`langgraph.json`, LangSmith Deployment, Neo4j Aura). The README covers the architecture and how to run everything. Commands:
+
+```bash
+uv sync
+uv run python -m etl.validate && uv run python -m etl.load_to_neo4j && uv run python -m etl.audit_graph && uv run python -m etl.load_articles
+uv run pytest -m "not e2e"          # fast tests; `uv run pytest` adds the e2e tests (real Neo4j and model calls)
+uv run langgraph dev                # the agent server on :2024
+cd web && pnpm install && pnpm dev  # the web app on :4200; `pnpm typecheck`, `pnpm test`, `pnpm test:e2e`
+```
+
+`docs/` holds local planning notes and is git-ignored: references to `docs/…` below only resolve on the author's machine.
 
 ## What this project is
 
-A personal clone of Vodafone/Fastweb's "Super Agent" — an internal copilot for call-center consultants (never customer-facing) — built with synthetic data instead of real enterprise systems. Full context lives in `docs/overview.md`, `docs/input_plan.md`, and `docs/proposed_plan.md`; read those before making architectural decisions, since they encode specific reasoning about why this design was chosen over alternatives.
+A personal project inspired by the published architecture of Vodafone/Fastweb's "Super Agent" (not affiliated) — an internal copilot for call-center consultants (never customer-facing) — built with synthetic data instead of real enterprise systems. Full context lives in `docs/overview.md`, `docs/input_plan.md`, and `docs/proposed_plan.md`; read those before making architectural decisions, since they encode specific reasoning about why this design was chosen over alternatives.
 
 ### Core architecture (from docs/overview.md)
 
@@ -32,7 +42,7 @@ A query enters through a Supervisor that (1) injects mock CRM context by custome
 
 `Rule` nodes are separate graph nodes linked via `GOVERNED_BY`, not text embedded in prompts — policy is enforced structurally so it can't be silently ignored by the LLM.
 
-**`Action` nodes are text for the human consultant, never an executed API call.** Per `docs/overview.md` (lines ~392, ~410): Super TOBi executes transactions via action tags to its own frontend; Super Agent — what this project clones — "only guides humans — it never executes anything directly." Every `API` node in this graph, reached via `Condition-[:VALIDATED_BY]->API`, is read-only verification (checking whether a condition holds), never a mutation. Do not add an `(:Action)-[:EXECUTES]->(:API)`-style relationship or a mutating endpoint on an Action — that would be cloning Super TOBi's capability, not Super Agent's, and was explicitly decided against.
+**`Action` nodes are text for the human consultant, never an executed API call.** Per `docs/overview.md` (lines ~392, ~410): Super TOBi executes transactions via action tags to its own frontend; Super Agent — what this project models — "only guides humans — it never executes anything directly." Every `API` node in this graph, reached via `Condition-[:VALIDATED_BY]->API`, is read-only verification (checking whether a condition holds), never a mutation. Do not add an `(:Action)-[:EXECUTES]->(:API)`-style relationship or a mutating endpoint on an Action — that would be modelling Super TOBi's capability, not Super Agent's, and was explicitly decided against.
 
 `Condition`, `Action`, and `API` are only worth modeling as separate nodes (rather than plain properties on `Step`) because they're generated as **shared, reusable libraries** and referenced by ID/endpoint from many procedure steps — see "Data dependency order" below. `verification_api` lives on the `Condition` entry, not the step, for the same reason: it's a fact about the condition (how do you verify it), not about which step happens to reference it. If you ever see a `Condition`/`Action` node with exactly one incoming `HAS_CONDITION`/`HAS_ACTION` relationship, or an `API` node with exactly one incoming `VALIDATED_BY`, that's a sign the library-reuse step didn't work as intended, not a schema problem.
 
@@ -52,13 +62,17 @@ When generating or modifying the synthetic datasets described in `docs/input_pla
 5. **Rules** — `applies_to_action_ids` reference step 3's action IDs
 6. **KB articles** — reference rule IDs from step 5
 
-### Project layout (per docs/proposed_plan.md; Phase 0-5 files now exist)
+### Project layout
 
 ```
-data/    — crm_records.json, conditions.json, actions.json, procedures.json, rules.json, kb_articles.json
-etl/     — validate.py, load_to_neo4j.py
-agent/   — state.py (graph state only), supervisor.py, procedural_executor.py, graph_rag_chain.py, ticket_interpreter.py, data_model.py (Reply), utils.py (reply / reply_of)
-mock_crm/ — crm_store.py
+data/      — crm_records.json, conditions.json, actions.json, procedures.json, rules.json, kb_articles.json
+etl/       — validate.py, load_to_neo4j.py, load_articles.py, audit_graph.py
+agent/     — state.py (graph state only), supervisor.py, procedural_executor.py, graph_rag_chain.py, ticket_interpreter.py,
+             data_model.py (Reply), utils.py (reply / reply_of), sources.py, graph.py + http_app.py + routes/ (served by LangGraph Server)
+mock_crm/  — crm_store.py, condition_evaluator.py, lookup stores
+slack_bot/ — the Slack front end (Bolt, Socket Mode)
+web/       — the Next.js web app (proxy route to the agent, password gate, Vitest + Playwright)
+eval/      — evaluation plan and the online code evaluators
 ```
 
 ETL loads via Python driver batch writes (`UNWIND $rows AS row CALL (row) {...} IN TRANSACTIONS`), not `apoc.load.json` — the data is already Python-validated local JSON, not something Neo4j needs to fetch itself. Uniqueness/node-key constraints on every `MERGE`-targeted label are created before import (see `docs/proposed_plan.md` Phase 2).

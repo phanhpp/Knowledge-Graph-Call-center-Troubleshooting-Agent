@@ -7,7 +7,7 @@ import { AGENT_API_PATH, ASSISTANT_ID, resolveAgentUrl } from "@/lib/agent";
 
 /* The URL helper, plus one cross-package check: the graph the page asks for must exist in the
    repo's langgraph.json. Nothing else checks that; a rename on the Python side would otherwise
-   show up as a 404 at runtime. (Adapted from the hitl-py web app.) */
+   show up as a 404 at runtime. (Adapted from an earlier human-in-the-loop project of mine.) */
 
 function setSearch(search: string) {
   window.history.replaceState({}, "", `${window.location.pathname}${search}`);

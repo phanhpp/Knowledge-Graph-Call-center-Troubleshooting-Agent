@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useFeedback } from "@/lib/use-feedback";
 
 /*
- * The thumbs lookup and the vote. (Adapted from the hitl-py web app: here each reply carries its
+ * The thumbs lookup and the vote. (Adapted from an earlier human-in-the-loop project of mine: here each reply carries its
  * own run id in additional_kwargs.run_id.)
  *
  * Pinned: seeding recorded votes must not overwrite a vote already in flight, because LangSmith
