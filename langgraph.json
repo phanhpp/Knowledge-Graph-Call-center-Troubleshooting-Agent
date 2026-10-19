@@ -1,0 +1,13 @@
+{
+  "python_version": "3.12",
+  "graphs": {
+    "super_agent": "./agent/graph.py:graph"
+  },
+  "env": ".env",
+  "source": {
+    "kind": "uv"
+  },
+  "http": {
+    "app": "./agent/http_app.py:app"
+  }
+}

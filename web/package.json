@@ -1,0 +1,39 @@
+{
+  "name": "super-agent-web",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 4200",
+    "build": "next build",
+    "start": "next start --port 4200",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "next build && playwright test"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph-sdk": "^1.9.24",
+    "@langchain/react": "^1.0.35",
+    "langchain": "^1.5.10",
+    "next": "^16.3.7",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/postcss": "^4",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.1.2",
+    "postcss": "^8",
+    "tailwindcss": "^4",
+    "typescript": "^5.9",
+    "vitest": "^5.0.3"
+  }
+}

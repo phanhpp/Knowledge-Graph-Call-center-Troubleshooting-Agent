@@ -31,7 +31,8 @@ With a checkpointer and a thread_id, the state is saved between turns (see agent
 what makes a follow-up work: the customer need not be repeated, and `explain_answer` reads the
 earlier messages. One conversation can cover several customers and general questions. A message is
 stamped with the customer it names (by the caller, the Slack bot) or, for a troubleshooting turn,
-with the current customer (by load_crm); an unstamped message was a general question. `customer_id`
+with the current customer (by load_crm); an unstamped message has no customer ID: a general question,
+or a follow-up like "why?" about an earlier answer. `customer_id`
 is the current customer: the last one named. Without a checkpointer every call stands alone.
 
 Jev (TypeSafe, a classifier: typed answers with probabilities, no generated text) is called in
@@ -41,8 +42,9 @@ agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 """
 
 import logging
+import re
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -307,14 +309,26 @@ def route_after_match(state: SuperAgentState) -> Literal["procedural_executor", 
     return "procedural_executor" if state.get("matched_procedure_id") else "graph_rag_chain"
 
 
-def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
-    """The last `limit` messages, each labelled with its customer, for explain_answer's prompt.
+# A label at the start of a text: the ones _explain_history adds, and "[general]"/"[reply, general]",
+# which older versions added. Claude sometimes copies one into its reply.
+_LABEL = re.compile(r"^(?:\[(?:CUST-\d+|reply about [^\]]*|reply, general|general)\]\s*)+")
 
-    Consultant messages become "[CUST-1001] <text>" and replies "[reply about CUST-1001] <text>",
-    a reply belonging to the consultant message before it. A message stamped with no customer was a
-    general question: "[general] <text>" and "[reply, general] <text>". A reply's citations are added as
-    "Sources: ..." (Claude does not see `additional_kwargs`). The window starts on a consultant
-    message, which Claude requires. The saved messages are not changed.
+
+def _without_label(text: str) -> str:
+    """`text` without the label(s) at its start, if any."""
+    return _LABEL.sub("", text)
+
+
+def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
+    """The last `limit` messages, those about a customer labelled with it, for explain_answer's prompt.
+
+    A consultant message stamped with a customer becomes "[CUST-1001] <text>", and the reply to it
+    "[reply about CUST-1001] <text>". A message with no customer ID, and its reply, get no label: it
+    may be a general question or a follow-up like "why?", so a label would claim more than we know.
+    Any label already in a saved text (copied by Claude, or added by an older version) is removed
+    first, so none appears twice. A reply's citations are added as "Sources: ..." (Claude does not
+    see `additional_kwargs`). The window starts on a consultant message, which Claude requires. The
+    saved messages are not changed.
 
     Returns (the labelled messages, every ID the replies in the window cite).
     """
@@ -324,14 +338,15 @@ def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
     labelled, cited = [], []
     customer = None
     for message in window:
+        text = _without_label(message.content)
         if message.type == "human":
             customer = message.additional_kwargs.get("customer_id")
-            labelled.append(HumanMessage(f"[{customer or 'general'}] {message.content}"))
+            labelled.append(HumanMessage(f"[{customer}] {text}" if customer else text))
         else:
             citations = list(message.additional_kwargs.get("citations", []))
             sources = f"\n\nSources: {', '.join(citations)}" if citations else ""
-            label = f"reply about {customer}" if customer else "reply, general"
-            labelled.append(AIMessage(f"[{label}] {message.content}{sources}"))
+            label = f"[reply about {customer}] " if customer else ""
+            labelled.append(AIMessage(f"{label}{text}{sources}"))
             cited += [c for c in citations if c not in cited]
     return labelled, cited
 
@@ -353,9 +368,9 @@ def explain_answer(state: SuperAgentState) -> dict:
     """Answer a follow-up about an earlier answer ("why?", "what does R012 say?"), from the
     conversation itself.
 
-    Claude gets the last _EXPLAIN_HISTORY messages, each labelled with the customer it was about, or
-    as general (see _explain_history), so it can follow a conversation that moves between customers
-    and general questions. A troubleshooting reply already holds everything a "why?" needs: the
+    Claude gets the last _EXPLAIN_HISTORY messages, those about a customer labelled with its ID (see
+    _explain_history), so it can follow a conversation that moves between customers and general
+    questions. A label Claude copies into its reply is removed before the reply is saved. A troubleshooting reply already holds everything a "why?" needs: the
     action, why the walk stopped, and every step checked with its value. The only thing added is the
     wording of the rules those messages cite, from Neo4j.
 
@@ -374,20 +389,25 @@ def explain_answer(state: SuperAgentState) -> dict:
     if named:
         focus = (
             f"The question is about customer {named}: answer only from {named}'s messages, and never "
-            f"take a reply about another customer, or a general reply, as one about {named}."
+            f"take a reply about another customer, or an unlabelled reply, as one about {named}."
         )
     else:
         focus = (
             "The question names no customer: answer about the earlier answer it refers to, usually "
             "the most recent one."
         )
+
+    # label messages (and their replies) with the customer ID if they have one, otherwise no label; only last 10 messages
     history, cited = _explain_history(state["messages"], _EXPLAIN_HISTORY)
+    # for rules cited in AI respones, fetch the full definition from neo4j
     rules = _rule_wording(cited)
+
     system = SystemMessage(
         "You are helping a call-centre consultant. They are asking a follow-up question about an "
         "earlier answer. The conversation below can cover several customers and general questions: "
-        "each consultant message starts with the customer ID it was about, or [general], and each "
-        "reply starts with '[reply about <customer ID>]' or '[reply, general]'. "
+        "a message about a customer starts with its customer ID, and the reply to it with "
+        "'[reply about <customer ID>]'; other messages have no label. The labels are only for "
+        "reading the conversation; never start your reply with one. "
         f"{focus} Answer from the conversation and the rule wording below ONLY; if they do not "
         "contain the answer, say so plainly, and never guess or claim an earlier answer was wrong. "
         "Be brief. A rule is a business policy governing an action, listed below; a step's "
@@ -395,9 +415,12 @@ def explain_answer(state: SuperAgentState) -> dict:
         "anything else a rule.\n\n"
         f"Rules cited in the conversation:\n{rules or '(none)'}"
     )
-    llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"})
+    # "nostream": LangGraph leaves this call's tokens out of the message stream. The reply a client
+    # shows is the one this node returns via reply() (with its sources and run id); without the tag the
+    # web app showed the explanation twice, once as Claude's streamed tokens and once as the reply.
+    llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"}, tags=["nostream"])
     response = llm.invoke([system, *history])
-    return reply(str(response.text))
+    return reply(_without_label(str(response.text)))
 
 
 def build_supervisor_graph(checkpointer=None):

@@ -442,12 +442,46 @@ def test_explain_history_keeps_the_last_messages_and_starts_on_a_consultant_mess
     assert cited == ["ACT-027"]
 
 
-def test_explain_history_labels_a_message_naming_no_customer_as_general():
-    """An unstamped message was a general question, and the reply to it a general answer."""
-    history, _ = _explain_history([HumanMessage("what is the SIM fee?"), AIMessage("It is waived once a year")], limit=10)
+def test_explain_history_leaves_a_message_with_no_customer_id_unlabelled():
+    """A message with no customer ID may be a general question or a follow-up like "why?" about a
+    customer's answer, so it and its reply get no label (a "[general]" label once misled Claude)."""
+    messages = [*A_THEN_B_THEN_A[:2], HumanMessage("why did it end up at Tier 2?"), AIMessage("All three checks said no")]
 
-    assert history[0].content == "[general] what is the SIM fee?"
-    assert history[1].content == "[reply, general] It is waived once a year"
+    history, _ = _explain_history(messages, limit=10)
+
+    assert [m.content for m in history[2:]] == ["why did it end up at Tier 2?", "All three checks said no"]
+
+
+def test_explain_history_does_not_label_a_saved_reply_twice():
+    """A reply saved with a label in its text (copied by Claude, or added by an older version) is
+    labelled once, from its stamp."""
+    messages = [
+        said("why?", "CUST-1001"),
+        AIMessage("[reply about CUST-1001] Because all three checks said no"),
+        HumanMessage("and the fee?"),
+        AIMessage("[reply, general] [reply, general] It is waived once a year"),
+    ]
+
+    history, _ = _explain_history(messages, limit=10)
+
+    assert [m.content for m in history] == [
+        "[CUST-1001] why?",
+        "[reply about CUST-1001] Because all three checks said no",
+        "and the fee?",
+        "It is waived once a year",
+    ]
+
+
+def test_explain_removes_a_label_claude_copies_into_its_reply(monkeypatch):
+    """Earlier replies in the history start with "[reply about ...]", and Claude sometimes starts its
+    own the same way; the label must not reach the consultant or the saved conversation."""
+    fake = FakeClaude(SimpleNamespace(text="[reply about CUST-1001] Because all three checks said no."))
+    monkeypatch.setattr("agent.supervisor.ChatAnthropic", fake)
+    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "")
+
+    result = explain_answer({"messages": A_THEN_B_THEN_A, "customer_id": "CUST-1001"})
+
+    assert reply_of(result).text == "Because all three checks said no."
 
 
 def test_explain_focuses_on_a_named_customer_or_on_what_the_question_refers_to(monkeypatch):

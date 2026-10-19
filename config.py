@@ -11,6 +11,7 @@ import sqlite3
 from typing import Optional
 
 from dotenv import load_dotenv
+from langsmith import traceable
 
 load_dotenv()
 
@@ -57,13 +58,23 @@ def get_driver():
     return GraphDatabase.driver(cfg.uri, auth=(cfg.username, cfg.password))
 
 
+@traceable(name="neo4j_connectivity", run_type="tool")
+def _verify_neo4j() -> None:
+    """Ask Neo4j to answer; raises if it can't (ServiceUnavailable, AuthError, ...).
+
+    Traced on its own so that when it raises, LangSmith records this step as an errored run (which
+    an alert can see), even though the caller catches the error and the turn ends normally.
+    """
+    get_driver().verify_connectivity()
+
+
 def neo4j_unavailable_reason() -> Optional[str]:
     """None if Neo4j answers; otherwise a short reason it doesn't (not running, wrong password, ...).
 
     Asks the server for real (verify_connectivity), because creating the driver never connects.
     """
     try:
-        get_driver().verify_connectivity()
+        _verify_neo4j()
     except Exception as e:  # ServiceUnavailable (not running), AuthError (bad password), ...
         return f"cannot reach Neo4j at {get_neo4j_config().uri}: {type(e).__name__}"
     return None

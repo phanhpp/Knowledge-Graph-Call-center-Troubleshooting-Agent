@@ -56,7 +56,9 @@ def classify(state: TicketInterpreterState) -> Command[Literal["classify", "__en
 
     # No explicit temperature — claude-sonnet-5 rejects it ("temperature is
     # deprecated for this model"), unlike older Claude models.
-    llm = ChatAnthropic(model=_MODEL).with_structured_output(_Classification)
+    # "nostream": an internal call, not a reply. Without the tag LangGraph streams its output to clients
+    # as a chat message of its own (an empty bubble in the web app).
+    llm = ChatAnthropic(model=_MODEL, tags=["nostream"]).with_structured_output(_Classification)
     result: _Classification = llm.invoke(f"{state['interpretation_question']}\n\n{context}")
 
     if result.confidence == "high" or broadened:

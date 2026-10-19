@@ -25,3 +25,5 @@ Thumbs.db
 
 # Saved conversations (LangGraph SQLite checkpointer)
 checkpoints.db*
+.venv-*/
+.langgraph_api/

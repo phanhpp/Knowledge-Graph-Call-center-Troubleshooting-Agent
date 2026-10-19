@@ -1,0 +1,50 @@
+@theme {
+  --color-primary: #7fc8ff;
+  --color-primary-light: #e5f4ff;
+  --color-primary-dark: #030710;
+  --color-accent-gold: #d5c3f7;
+
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f2faff;
+  --color-surface-tertiary: #e5f4ff;
+
+  --color-border: #b8dfff;
+  --color-border-hover: #99d4ff;
+
+  --color-text: #030710;
+  --color-text-secondary: #3d5166;
+  --color-text-tertiary: #6b8299;
+
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+
+  --sidebar-width: 18rem;
+  --header-height: 96px;
+}
+
+.dark {
+  --color-primary: #7fc8ff;
+  --color-primary-light: #99d4ff;
+  --color-primary-dark: #1a2740;
+
+  --color-surface: #030710;
+  --color-surface-secondary: #0b1120;
+  --color-surface-tertiary: #1a2740;
+
+  --color-border: #1a2740;
+  --color-border-hover: #2a3d5a;
+
+  --color-text: #c8ddf0;
+  --color-text-secondary: #6b8299;
+  --color-text-tertiary: #6b8299;
+}
