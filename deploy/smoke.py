@@ -7,7 +7,10 @@ One real conversation, so it calls Jev and Claude, and it writes one 👍 to Lan
   1. troubleshooting with a customer: the reply has citations, sources and a run id, and the
      customer ID survived the trip over HTTP;
   2. "why?" on the same thread: explain sees the history, and cites nothing;
-  3. the custom routes: GET /customers/{id}, POST /feedback/{thread}, GET /feedback/{thread}/votes.
+  3. the custom routes: GET /customers/{id}, POST /feedback/{thread}, GET /feedback/{thread}/votes;
+  4. against a deployment: the custom routes refuse a request WITHOUT the API key. They're only
+     covered by the deployment's key check because langgraph.json sets
+     "enable_custom_route_auth": true; LangGraph Server leaves user routes open by default.
 Prints PASS/FAIL per check and exits non-zero if any failed.
 """
 
@@ -80,6 +83,15 @@ async def main(url: str) -> None:
             votes = await http.get(f"/feedback/{thread_id}/votes", params={"run_ids": run_id})
             check("GET /feedback/votes reads it back", votes.json().get("votes", {}).get(run_id, {}).get("score") == 1, votes.text[:120])
             print(f"      👍 written on run {run_id}: open it in LangSmith to see `user_score`")
+
+    # 4. On a deployment, our routes must be behind the same key check as LangGraph's own.
+    if not local:
+        async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=30) as anonymous:
+            for path in (f"/customers/{CUSTOMER}", "/sources/KB-006", f"/feedback/{thread_id}/votes"):
+                response = await anonymous.get(path)
+                check(f"no key: GET {path.split('?')[0]} refused", response.status_code in (401, 403), str(response.status_code))
+            response = await anonymous.post(f"/feedback/{thread_id}", json={"run_id": "not-a-uuid", "score": 1})
+            check("no key: POST /feedback refused", response.status_code in (401, 403), str(response.status_code))
 
     print(f"\n{'all checks passed' if not failures else f'{len(failures)} failed: ' + ', '.join(failures)}")
     sys.exit(1 if failures else 0)
