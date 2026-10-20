@@ -2,6 +2,8 @@
 
 A copilot for call-centre consultants. A consultant types a customer's problem; the agent checks the customer's account, decides what is being asked, and either **walks a troubleshooting procedure stored in a Neo4j knowledge graph** or **answers from a policy knowledge base with GraphRAG**. Every answer cites the actions, rules and articles it came from, read from the graph, never generated.
 
+**Live demo:** [super-agent-silk.vercel.app](https://super-agent-silk.vercel.app) (password-protected: the password is available on request)
+
 > Inspired by the published architecture of Vodafone's "Super Agent" consultant copilot. Not affiliated with Vodafone; all customers, procedures, rules and articles are synthetic.
 
 ![The web app: a troubleshooting walk for CUST-1001 with its checked steps, an explanation follow-up, the customer card, and rule R012 expanded in the Sources panel](media/web-app.jpg)
@@ -456,11 +458,11 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 - **Agent:** `langgraph.json` serves `agent/graph.py:graph` as `super_agent`, with the custom routes from `agent/http_app.py`, on LangSmith Deployment (built from GitHub on push; Python 3.12; the package list in `pyproject.toml` decides what's in the image). Its secrets are the model keys and the four `NEO4J_*` settings for Aura.
 - **Graph:** Neo4j Aura, loaded with the same `etl` scripts.
 - **Check a deployment:** `uv run python deploy/smoke.py --url <deployment URL>` (sends `LANGSMITH_API_KEY`).
-- **Web app:** deployable to Vercel with root `web/` and `AGENT_SERVER_URL`, `LANGSMITH_API_KEY`, `WEB_PASSWORD`.
+- **Web app:** on Vercel ([live](https://super-agent-silk.vercel.app)), root `web/`, with `AGENT_SERVER_URL`, `LANGSMITH_API_KEY` and `WEB_PASSWORD` as environment variables.
 
 ## Roadmap
 
-- Vercel deployment and a CI workflow for the web app and the agent (type check, Vitest, Playwright, import check, pytest).
+- A CI workflow for the web app and the agent (type check, Vitest, Playwright, import check, pytest), required on `main`.
 - Slack over HTTP, through the same proxy as the web app, verified by Slack's request signature (no long-running process).
 - Per-user sign-in, with each consultant seeing only their own conversations.
 - Calibrate the Jev judges' thresholds on hand-labelled runs, and small offline test sets (routing, retrieval recall@5).
