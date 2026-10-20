@@ -427,19 +427,6 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 
 The online evaluators (above) keep checking real traffic after deployment.
 
-## Engineering notes
-
-Problems found along the way, and what fixed them:
-
-- **A reply shown twice in the web app.** A model call inside a node streams its tokens as a message of its own, and the node then returns the real reply as a second one. Internal model calls are now tagged `nostream`, so clients only see replies the graph returns.
-- **Live replies missing their citations.** `@langchain/react` streams over a newer protocol in which a node-written message arrives with empty `additional_kwargs`; a `curl` test of the server had shown them. The page now reads them from the thread's saved state after each turn.
-- **A handled failure is invisible to alerts.** When Neo4j is down the agent answers politely, so the run succeeds and no alert fires. The connectivity check now runs as its own traced step: it errors (alerts see it) while the caller still catches it.
-- **Python 3.14 hid a bug that 3.12 crashes on.** Lazy annotations let a missing `Optional` import pass every local test; the deployment runs 3.12. The suite now runs on both.
-- **A rendered but dead page.** Next's dev server blocks its own hot-reload resources for an unexpected host, and the auth matcher caught Next's internal paths: the page never hydrated, with no console error.
-- **A LangSmith rule that matched nothing.** "Is Trace = true" means root runs only, so a judge on a child run never ran. Filters are now checked against real traces before relying on them.
-- **Custom routes were open without a key.** LangGraph Server applies its API-key check only to its own endpoints; routes added through `http.app` stay public unless `enable_custom_route_auth` is set. Found by calling the deployment without a key; the smoke test now checks every custom route refuses that.
-- **The deployment never rebuilt.** It was created with build-on-push off; found by reading the deployment's revisions through LangSmith's API.
-
 ## Run it locally
 
 You need Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 24 with pnpm, and Neo4j 5.18.1+ (local or [Aura](https://neo4j.com/cloud/aura/)). Copy `.env.example` to `.env` and fill it in.
