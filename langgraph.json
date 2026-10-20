@@ -8,6 +8,7 @@
     "kind": "uv"
   },
   "http": {
-    "app": "./agent/http_app.py:app"
+    "app": "./agent/http_app.py:app",
+    "enable_custom_route_auth": true
   }
 }

@@ -437,6 +437,7 @@ Problems found along the way, and what fixed them:
 - **Python 3.14 hid a bug that 3.12 crashes on.** Lazy annotations let a missing `Optional` import pass every local test; the deployment runs 3.12. The suite now runs on both.
 - **A rendered but dead page.** Next's dev server blocks its own hot-reload resources for an unexpected host, and the auth matcher caught Next's internal paths: the page never hydrated, with no console error.
 - **A LangSmith rule that matched nothing.** "Is Trace = true" means root runs only, so a judge on a child run never ran. Filters are now checked against real traces before relying on them.
+- **Custom routes were open without a key.** LangGraph Server applies its API-key check only to its own endpoints; routes added through `http.app` stay public unless `enable_custom_route_auth` is set. Found by calling the deployment without a key; the smoke test now checks every custom route refuses that.
 - **The deployment never rebuilt.** It was created with build-on-push off; found by reading the deployment's revisions through LangSmith's API.
 
 ## Run it locally
