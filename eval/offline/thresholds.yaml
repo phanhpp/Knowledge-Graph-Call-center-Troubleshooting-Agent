@@ -1,0 +1,11 @@
+# Minimum number of examples that must pass each check, per suite (out of the suite's examples).
+# `uv run python -m eval.offline.run --gate` fails if any check is below. Small suites, so these are
+# counts, not percentages: a regression detector, not a benchmark. Set from the baseline, then tightened.
+
+walks:                 # 20 examples, one per procedure: the outcome is fully determined by the data
+  path_correct: 19     # routing is a model: allow one miss
+  procedure_correct: 19
+  action_correct: 19   # a misrouted walk fails here too; a correctly routed walk must be exact
+  rules_correct: 19
+  steps_correct: 19
+  has_checklist: 19
