@@ -8,6 +8,12 @@
 #      HAS_CONDITION edge dangling, since MERGE only adds relationships,
 #      never retracts them)
 #
+# Loaded twice: first the BASE branch's data, then this pull request's on top,
+# then the audit. A fresh, empty database can't have stale edges, so a single
+# load would pass the audit whatever the loader does; loading over existing data
+# is how the graph is really updated (on Aura), and the only way the stale-edge
+# cleanup in etl/load_to_neo4j.py actually gets exercised.
+#
 # Plain Community-edition Neo4j is enough here (no Enterprise license
 # needed) because the schema uses a composite UNIQUE constraint on Step,
 # not NODE KEY, which is Enterprise-only and wasn't buying anything anyway.
@@ -24,6 +30,7 @@ on:
       - "data/**"
       - "etl/**"
       - "mock_crm/**"
+      - ".github/workflows/data-integrity.yml"
 
 jobs:
   validate-and-audit:
@@ -31,7 +38,7 @@ jobs:
 
     services:
       neo4j:
-        image: neo4j:5.17
+        image: neo4j:5.26
         env:
           NEO4J_AUTH: neo4j/ci-test-password
         ports:
@@ -51,9 +58,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base branch too, for the first load
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
         run: uv sync
@@ -61,7 +70,12 @@ jobs:
       - name: "Tier 1: JSON validation (cycles, reachability, references)"
         run: uv run python -m etl.validate
 
-      - name: Load data into ephemeral CI Neo4j
+      - name: Load the base branch's data first (an existing graph, as on Aura)
+        run: |
+          git worktree add /tmp/base "origin/${{ github.base_ref }}"
+          cd /tmp/base && uv sync && uv run python -m etl.load_to_neo4j
+
+      - name: Load this pull request's data on top
         run: uv run python -m etl.load_to_neo4j
 
       - name: "Tier 2: live-graph audit"

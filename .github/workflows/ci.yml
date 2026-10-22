@@ -1,0 +1,112 @@
+# The code check, on every pull request and every push to main. Two jobs, no secrets:
+#
+#   web    the Next.js app: type check, Vitest, then Playwright against a production build. The
+#          agent is faked from recorded traffic (web/e2e/mock-agent.ts), so no key or model call.
+#   agent  the Python agent: first an import check with ONLY the deployed dependencies (proves the
+#          image LangSmith builds is complete), then the fast pytest suite against a throwaway Neo4j,
+#          on Python 3.12 like the deployment. The 25 end-to-end tests make paid model calls and
+#          stay manual; tests that need a key skip themselves.
+#
+# data-integrity.yml stays the separate data check (are the JSON files right, does the graph match
+# them); it only runs on pull requests that touch the data.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm before setup-node: `cache: pnpm` needs the binary to exist.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc # paths in `uses` steps are repo-relative
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # `next typegen` first: the route types tsc needs are generated, and git-ignored.
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+
+      - name: Keep the Playwright traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: web/test-results
+          retention-days: 7
+
+  agent:
+    name: agent
+    runs-on: ubuntu-latest
+
+    services:
+      neo4j:
+        image: neo4j:5.26 # neo4j-graphrag needs 5.18.1+; the project is developed on 5.26
+        env:
+          NEO4J_AUTH: neo4j/ci-test-password
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-test-password 'RETURN 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+
+    env:
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ci-test-password
+      NEO4J_DATABASE: neo4j
+      LANGSMITH_TRACING: "false" # no LangSmith key here; tests that check tracing record locally
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12" # the deployment's version: 3.14 once hid a missing import
+
+      # --no-dev installs exactly what the deployed image installs, so an import that only works
+      # because a dev tool pulled a package in fails here, not mid-deploy. --frozen: never re-resolve.
+      - name: Import check with the deployed dependencies only
+        run: |
+          uv sync --no-dev --frozen
+          uv run --no-dev python -c "import agent.graph, agent.http_app"
+
+      - run: uv sync --frozen
+
+      - name: Load the graph the tests query
+        run: |
+          uv run python -m etl.validate
+          uv run python -m etl.load_to_neo4j
+
+      - name: Fast test suite (no end-to-end, no keys)
+        run: uv run pytest -m "not e2e" -q
