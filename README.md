@@ -427,7 +427,7 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 | **GitHub Actions** | on every pull request touching `data/`, `etl/` or `mock_crm/`: validate the JSON, load a fresh Neo4j, audit the graph against the data | — |
 | **Smoke test** | `deploy/smoke.py`: one real conversation and every custom route, against a local or deployed server | 11 checks |
 
-The online evaluators (above) keep checking real traffic after deployment.
+The online evaluators (above) keep checking real traffic after deployment. Every suite, file by file, and the bugs each one pins: [TESTING.md](TESTING.md).
 
 ## Run it locally
 
