@@ -1,5 +1,7 @@
 # Super Agent: a knowledge-graph copilot for call-centre troubleshooting
 
+[![CI](https://github.com/phanhpp/Knowledge-Graph-Call-center-Troubleshooting-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/phanhpp/Knowledge-Graph-Call-center-Troubleshooting-Agent/actions/workflows/ci.yml)
+
 A copilot for call-centre consultants. A consultant types a customer's problem; the agent checks the customer's account, decides what is being asked, and either **walks a troubleshooting procedure stored in a Neo4j knowledge graph** or **answers from a policy knowledge base with GraphRAG**. Every answer cites the actions, rules and articles it came from, read from the graph, never generated.
 
 **Live demo:** [super-agent-silk.vercel.app](https://super-agent-silk.vercel.app) (password-protected: the password is available on request)
@@ -424,7 +426,7 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 | **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators | 231 tests; 25 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
 | **Vitest** (`web/`) | the password gate, message formats, panel sizes, the feedback and full-source hooks | 40 |
 | **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding | 23 |
-| **GitHub Actions** | on every pull request touching `data/`, `etl/` or `mock_crm/`: validate the JSON, load a fresh Neo4j, audit the graph against the data | — |
+| **GitHub Actions** | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | — |
 | **Smoke test** | `deploy/smoke.py`: one real conversation and every custom route, against a local or deployed server | 11 checks |
 
 The online evaluators (above) keep checking real traffic after deployment. Every suite, file by file, and the bugs each one pins: [TESTING.md](TESTING.md).
@@ -462,7 +464,6 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 
 ## Roadmap
 
-- A CI workflow for the web app and the agent (type check, Vitest, Playwright, import check, pytest), required on `main`.
 - Slack over HTTP, through the same proxy as the web app, verified by Slack's request signature (no long-running process).
 - Per-user sign-in, with each consultant seeing only their own conversations.
 - Calibrate the Jev judges' thresholds on hand-labelled runs, and small offline test sets (routing, retrieval recall@5).

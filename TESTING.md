@@ -8,7 +8,8 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 | Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
-| Data and graph | GitHub Actions | `.github/workflows/data-integrity.yml` | 3 steps | runs in CI with a throwaway Neo4j |
+| Every pull request | GitHub Actions | `.github/workflows/ci.yml` | 2 jobs | runs in CI, no secrets; required before merging to `main` |
+| Data and graph | GitHub Actions | `.github/workflows/data-integrity.yml` | 1 job | runs in CI with a throwaway Neo4j, on data pull requests |
 | Production traffic | LangSmith online evaluators | `eval/` | 3 code checks + 7 Jev judges | runs in LangSmith on every real conversation |
 
 ## Running them
@@ -88,8 +89,22 @@ One real conversation against a running server, local or deployed, run after eve
 
 ## CI
 
-- **Data integrity** (`.github/workflows/data-integrity.yml`), on pull requests that touch `data/`, `etl/` or `mock_crm/`: validates the JSON, loads it into a throwaway Neo4j, and audits the graph against the data, so a data edit can't leave the graph out of sync (the loader removes stale edges; the audit proves it).
-- **Planned:** a `ci.yml` on every pull request: the web app (type check, Vitest, Playwright) and the agent (an import check with no keys, then the fast pytest suite on Python 3.12 against a throwaway Neo4j), required before merging to `main`.
+Two GitHub Actions workflows, both without secrets.
+
+**`ci.yml`, the code check**, on every pull request and every push to `main`. Both jobs must pass before a pull request can merge into `main`.
+
+| Job | Runs |
+|---|---|
+| `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 200 pass, 6 skip because they need API keys |
+
+**`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
+
+1. `etl.validate`: the JSON files are consistent and every procedure can finish.
+2. Load the **base branch's** data into a throwaway Neo4j, then this pull request's data **on top**: the way the real graph gets updated.
+3. `etl.audit_graph`: every step's `HAS_CONDITION`, `HAS_ACTION` and `NEXT_STEP` edges match `procedures.json` exactly.
+
+Loading twice matters: a fresh, empty database can't have stale edges, so a single load would pass the audit whatever the loader does. Loading over existing data is what exercises the loader's stale-edge cleanup (`MERGE` alone only ever adds edges).
 
 ## In production
 
@@ -100,7 +115,7 @@ Testing doesn't stop at deployment. Every real conversation is scored in LangSmi
 | Bug | Caught by |
 |---|---|
 | The walk looping forever (routing couldn't advance the step) | `test_procedural_executor.py` |
-| A reloaded graph keeping stale edges | `etl.audit_graph`, in the data-integrity CI |
+| A reloaded graph keeping stale edges | `etl.audit_graph` after loading twice, in the data-integrity CI |
 | Explanations treating a follow-up as a "general" question, and Claude copying history labels into its reply | `test_supervisor.py` |
 | A down Neo4j invisible to alerts | `test_config.py` |
 | A 👍 filed on the wrong run | `test_sources.py` (the run id is the root run) |
@@ -108,4 +123,4 @@ Testing doesn't stop at deployment. Every real conversation is scored in LangSmi
 | An unreachable agent leaving the page on "Working on it…" | `errors.spec.ts` |
 | A vote overwritten while still being sent | `use-feedback.test.ts` |
 | Custom routes answering without the API key | `deploy/smoke.py` |
-| A Python 3.12-only crash hidden by 3.14 | the planned CI runs the suite on 3.12 |
+| A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
