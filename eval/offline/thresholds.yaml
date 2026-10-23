@@ -10,6 +10,6 @@ walks:                 # 20 examples, one per procedure: the outcome is fully de
   steps_correct: 19
   has_checklist: 19
 
-routing:               # 24 examples; 3 repeated runs gave identical results
+routing:               # 24 examples; repeated runs gave identical results
   path_correct: 23     # baseline 24/24: allow one miss
-  procedure_correct: 22  # baseline 23/24 (the "hasn't tried resetting the password" near-miss fails every time): allow one more
+  procedure_correct: 23  # baseline 24/24 since PROC-018/020's when_to_use was reworded: allow one miss

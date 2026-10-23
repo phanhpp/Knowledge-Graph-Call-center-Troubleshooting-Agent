@@ -142,7 +142,7 @@ There's no oracle here: each answer comes from the procedures' `when_to_use` tex
 | `no-procedure` | 1 | a real problem no procedure covers |
 | `off-topic` | 1 | nothing to do with the job |
 
-**Baseline:** path 24/24, procedure 23/24, the same in 3 repeated runs. The one miss: "…hasn't tried resetting the password" goes to PROC-020 (login fails *after* a reset) instead of PROC-018 (locked out).
+**Baseline:** path 24/24, procedure 24/24, the same in 3 repeated runs. The first baseline was 23/24: "…hasn't tried resetting the password" went to PROC-020 (login fails *after* a reset) instead of PROC-018 (locked out). Rewording the two procedures' `when_to_use` to make "has a reset actually been done?" the deciding fact fixed it.
 
 **To change an example:** edit `ROUTES` in `build_routing.py` and run `uv run python -m eval.offline.build_routing`.
 
