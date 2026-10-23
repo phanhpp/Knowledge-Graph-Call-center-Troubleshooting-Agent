@@ -20,10 +20,12 @@ eval/
 │       └── build_valid_ids.py                refresh citations_exist.py's IDs after data/ changes
 └── offline/
     ├── datasets/*.jsonl                      golden examples, one file per suite
-    ├── build_walks.py, build_routing.py      write those files
+    ├── build_walks.py, build_routing.py,     write those files
+    │   build_kb.py
     ├── oracle.py                             works out a walk's right answer from data/
     ├── target.py                             runs one example through the real agent
-    ├── evaluators/code.py                    the checks for each suite
+    ├── evaluators/code.py                    the code checks for each suite
+    ├── evaluators/jev.py                     the Jev judges, for answers code can't check
     ├── run.py                                runs a suite as a LangSmith experiment
     └── thresholds.yaml                       minimum passes per check, for --gate
 ```
@@ -59,7 +61,9 @@ Needs Neo4j (graph and articles loaded) and the model keys, like the agent. Make
        ▼                          ▼                          ▼
  datasets/<name>.jsonl     evaluators/code.py         thresholds.yaml
  the examples +            SUITES["<name>"]           "<name>:" section
- right answers             which checks to run        minimum passes
+ right answers             + evaluators/jev.py        minimum passes
+                           JUDGES["<name>"]
+                           which checks to run
        │                          │                          │
        │ run.py uploads it        │                          │
        ▼                          │                          │
@@ -82,7 +86,7 @@ Needs Neo4j (graph and articles loaded) and the model keys, like the agent. Make
 ```
 
 - Only `run.py` knows the suite name. `target.py` just runs the graph.
-- A new suite = a JSONL file + a `SUITES` entry + a `thresholds.yaml` section.
+- A new suite = a JSONL file + a `SUITES` entry (and `JUDGES`, if Jev judges it) + a `thresholds.yaml` section.
 
 ### How a run works (walks example)
 
@@ -172,9 +176,32 @@ Does each message reach the right path and procedure? Checks: `path_correct`, `p
 
 **To change an example:** edit `ROUTES` in `build_routing.py`, then run `uv run python -m eval.offline.build_routing`.
 
+### Knowledge-base suite (15)
+
+General questions answered from the articles: 12 the articles answer (all 9 categories), 3 they don't (e.g. "the exact SIM fee amount": the article mentions the fee, not the amount). Each answerable question has its article and 2–3 key facts taken from the article's text.
+
+| Check | Type | Question |
+| --- | --- | --- |
+| `path_correct` | code | Did it go to the knowledge base? |
+| `recall_at_5` | code | Was the right article among the 5 the search returned? |
+| `mrr` | code | How high? 1 if first, 0.5 if second… (mean = MRR) |
+| `facts_covered` | Jev | Share of the key facts the answer states |
+| `no_contradiction` | Jev | Does it agree with the reference answer? |
+| `supported` | Jev | Is everything it says in the articles? |
+| `usable` | Jev | Could a consultant use it on a live call? |
+| `admits_gap` | Jev | Unanswerable only: does it say the articles don't cover it? |
+
+**How Jev judges:** one call per question. Jev reads the question, the reference answer, the agent's answer and the 5 articles **exactly as Claude saw them** (text plus "Policy rules cited by this article"), and gives a probability of "yes" for each question; 0.5 or more counts as yes. Each score's comment keeps Jev's raw numbers. The wording of `supported` and `usable` matches the live LangSmith judges.
+
+**Is the judge right?** `tests/e2e/judges/` feeds it 5 known-bad answers (wrong facts, vague, made-up amounts) and 1 good one: it scores them 0.98–0.99 vs 0.02–0.06. Run it after changing a judge's wording.
+
+**Baseline (3 runs):** recall 36/36, MRR 0.96, facts 0.94, supported 45/45, no contradictions, unanswerable admitted 9/9. The misses are real: the fee question's article comes 2nd, and some answers skip a minor fact (checked by reading them).
+
+**To change a question:** edit `ANSWERABLE` / `UNANSWERABLE` in `build_kb.py`, then run `uv run python -m eval.offline.build_kb`.
+
 ### Coming next
 
-Knowledge base (15, with Jev judges), conversations (6), guards (4), adversarial (6).
+Conversations (6), guards (4), adversarial (6).
 
 ## When Jev fails
 

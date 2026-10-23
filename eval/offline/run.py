@@ -7,15 +7,20 @@ For each suite it:
   1. uploads datasets/<suite>.jsonl to the LangSmith dataset `super-agent-offline-<suite>`. An
      example keeps the same LangSmith ID every time (made from its golden ID), so editing it in the
      file updates it in LangSmith, and deleting it from the file deletes it there too;
-  2. runs every example through the agent (target.py) and scores it (evaluators/), saved as a
-     LangSmith experiment named `<suite>-<tag>`: open two experiments side by side to compare versions;
+  2. runs every example through the agent (target.py) and scores it with the suite's code checks
+     (evaluators/code.py) and Jev judges (evaluators/jev.py), saved as a LangSmith experiment named
+     `<suite>-<tag>`: open two experiments side by side to compare versions;
   3. prints how many examples passed each check, which failed and where they went instead, how each
      slice did (e.g. routing's "typo" examples), and the latency, and saves the same to
      results/<suite>-<tag>.json. With --gate, it exits with an error if a check is below its threshold.
 
-If a run crashes (e.g. a model API returns 529 Overloaded), there is no reply to score. It is listed
-as "errored", not counted as a wrong answer: an outage is not a quality drop. The gate still fails
-and asks you to rerun, since part of the suite wasn't measured.
+If a run crashes (e.g. a model API returns 529 Overloaded), there is no reply to score; if a judge
+crashes, there is no score. Both are listed as "errored", not counted as wrong answers: an outage is
+not a quality drop. The gate still fails and asks you to rerun, since part of the suite wasn't measured.
+
+A score is True/False or a number from 0 to 1. It counts as passed at 1 (True, or perfect), and the
+mean is kept too, for scores like MRR. A score of None means the check doesn't apply to that example
+(e.g. recall on a question the articles can't answer) and is left out.
 
 Needs what the agent needs: Neo4j with the graph and articles loaded, and the model keys. It makes
 real model calls, so it costs money. Experiments are traced to their own LangSmith projects, never
@@ -35,6 +40,7 @@ import yaml
 
 import config  # noqa: F401  (loads .env)
 from eval.offline.evaluators.code import SUITES as CODE_EVALUATORS
+from eval.offline.evaluators.jev import JUDGES
 from eval.offline.target import target
 
 HERE = Path(__file__).resolve().parent
@@ -105,7 +111,7 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
     client = Client()
     examples = load_examples(suite)
     dataset = sync_dataset(client, suite, examples)
-    evaluators = CODE_EVALUATORS.get(suite, [])
+    evaluators = CODE_EVALUATORS.get(suite, []) + JUDGES.get(suite, [])
     results = evaluate(
         target,
         data=dataset,
@@ -120,9 +126,11 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
 
     passed: dict[str, int] = defaultdict(int)
     total: dict[str, int] = defaultdict(int)
+    score_sum: dict[str, float] = defaultdict(float)
+    fractional: set[str] = set()  # keys with 0-1 scores (e.g. mrr), whose mean is worth showing
     failures: dict[str, list[str]] = defaultdict(list)
     errored: dict[str, str] = {}
-    missed: dict[str, str] = {}  # golden id -> where it went, for examples that failed a check
+    missed: dict[str, str] = {}  # golden id -> the checks it failed (and where it went, for routing)
     slices: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # slice -> [passed every check, runs]
     latencies = []
     for row in results:
@@ -133,16 +141,28 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
             continue
         if run.end_time and run.start_time:
             latencies.append((run.end_time - run.start_time).total_seconds())
-        passed_all = True
+        failed_keys = []
         for result in row["evaluation_results"]["results"]:
+            if (result.extra or {}).get("error"):
+                errored[golden_id] = f"{result.key}: {result.comment}"[:200]
+                continue
+            if result.score is None:
+                continue  # the check doesn't apply to this example
             total[result.key] += 1
-            if result.score:
+            score_sum[result.key] += float(result.score)
+            if isinstance(result.score, float):
+                fractional.add(result.key)
+            if result.score >= 1:
                 passed[result.key] += 1
             else:
                 failures[result.key].append(golden_id)
-                passed_all = False
-        if not passed_all:
-            missed[golden_id] = went(run.outputs or {}, row["example"].outputs or {})
+                failed_keys.append(result.key)
+        passed_all = not failed_keys
+        if failed_keys:
+            where = ""
+            if {"path_correct", "procedure_correct"} & set(failed_keys):
+                where = f" ({went(run.outputs or {}, row['example'].outputs or {})})"
+            missed[golden_id] = ", ".join(failed_keys) + where
         slice_name = (row["example"].metadata or {}).get("slice")
         if slice_name:
             slices[slice_name][0] += passed_all
@@ -154,7 +174,11 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
         "experiment": results.experiment_name,
         "examples": len(examples),
         "repetitions": repetitions,
-        "checks": {key: {"passed": passed[key], "total": total[key]} for key in total},
+        "checks": {
+            key: {"passed": passed[key], "total": total[key], "mean": round(score_sum[key] / total[key], 3)}
+            | ({"fractional": True} if key in fractional else {})
+            for key in total
+        },
         "failures": {key: sorted(set(ids)) for key, ids in failures.items()},
         "errored": dict(sorted(errored.items())),
         "missed": dict(sorted(missed.items())),
@@ -174,7 +198,8 @@ def print_summary(summary: dict) -> None:
     print(f"\n{summary['suite']}: experiment {summary['experiment']} ({summary['examples']} examples x {summary['repetitions']})")
     for key, counts in summary["checks"].items():
         failing = summary["failures"].get(key, [])
-        print(f"  {key:24} {counts['passed']:>3}/{counts['total']:<3}{'  failing: ' + ', '.join(failing) if failing else ''}")
+        mean = f"  mean {counts['mean']:.2f}" if counts.get("fractional") else ""
+        print(f"  {key:24} {counts['passed']:>3}/{counts['total']:<3}{mean}{'  failing: ' + ', '.join(failing) if failing else ''}")
     for golden_id, where in summary.get("missed", {}).items():
         print(f"  missed                   {golden_id}: {where}")
     if summary.get("slices"):
@@ -185,21 +210,26 @@ def print_summary(summary: dict) -> None:
 
 
 def gate(summary: dict, thresholds: dict) -> list[str]:
-    """What fails the gate: errored runs, and checks below their threshold. A threshold is a count
-    out of the suite's examples (e.g. 19 of 20). With --repetitions it applies as a rate: 57 of 60
-    passes a threshold of 19 of 20."""
+    """What fails the gate: errored runs, and checks below their threshold. A threshold is either:
+      - a count: how many examples must pass, out of those the check applies to (e.g. 19 of 20).
+        With --repetitions it applies as a rate: 57 of 60 passes a threshold of 19 of 20;
+      - {"mean": x}: the average score must reach x (for 0-1 scores like MRR)."""
     problems = []
     if summary.get("errored"):
         problems.append(f"{summary['suite']}: {len(summary['errored'])} run(s) errored, not measured: rerun")
-    for key, minimum in (thresholds.get(summary["suite"]) or {}).items():
+    for key, threshold in (thresholds.get(summary["suite"]) or {}).items():
         counts = summary["checks"].get(key)
         if counts is None:
             problems.append(f"{summary['suite']}.{key}: not measured")
             continue
-        required_rate = minimum / summary["examples"]
+        if isinstance(threshold, dict):
+            if counts["mean"] < threshold["mean"]:
+                problems.append(f"{summary['suite']}.{key}: mean {counts['mean']:.2f}, needs {threshold['mean']}")
+            continue
+        applicable = round(counts["total"] / summary.get("repetitions", 1))  # examples the check applies to
         rate = counts["passed"] / counts["total"] if counts["total"] else 0
-        if rate < required_rate:
-            problems.append(f"{summary['suite']}.{key}: {counts['passed']}/{counts['total']} passed, needs {minimum}/{summary['examples']}")
+        if rate < threshold / applicable:
+            problems.append(f"{summary['suite']}.{key}: {counts['passed']}/{counts['total']} passed, needs {threshold}/{applicable}")
     return problems
 
 

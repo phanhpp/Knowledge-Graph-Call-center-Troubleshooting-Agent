@@ -122,8 +122,10 @@ def test_gate_fails_below_a_threshold_and_passes_at_it():
 
 def test_gate_applies_as_a_rate_with_repetitions():
     """With 3 repetitions of 20 examples, 57 of 60 is the same rate as 19 of 20, so it passes."""
-    summary = {"suite": "walks", "examples": 20, "checks": {"action_correct": {"passed": 57, "total": 60}}}
+    summary = {"suite": "walks", "examples": 20, "repetitions": 3, "checks": {"action_correct": {"passed": 57, "total": 60}}}
     assert gate(summary, {"walks": {"action_correct": 19}}) == []
+    summary["checks"]["action_correct"]["passed"] = 56
+    assert gate(summary, {"walks": {"action_correct": 19}}) == ["walks.action_correct: 56/60 passed, needs 19/20"]
 
 
 def test_gate_flags_a_check_that_wasnt_measured():

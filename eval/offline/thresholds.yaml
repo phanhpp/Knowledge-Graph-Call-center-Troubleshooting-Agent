@@ -13,3 +13,14 @@ walks:                 # 20 examples, one per procedure: the outcome is fully de
 routing:               # 24 examples; repeated runs gave identical results
   path_correct: 23     # baseline 24/24: allow one miss
   procedure_correct: 23  # baseline 24/24 since PROC-018/020's when_to_use was reworded: allow one miss
+
+kb:                    # 15 questions (12 answerable, 3 not); baseline over 3 runs. Counts are out of
+                       # the questions a check applies to; {mean: x} is a minimum average (0-1 scores).
+  path_correct: 14     # baseline 15/15: allow one miss
+  recall_at_5: 11      # of 12 answerable; baseline 12/12
+  mrr: {mean: 0.9}     # baseline 0.96 (the fee question's article comes 2nd, every time)
+  facts_covered: {mean: 0.85}  # baseline 0.94 (answers sometimes skip a minor fact)
+  no_contradiction: 12 # of 12: a contradicted policy is never acceptable
+  supported: 14        # of 15: at most one answer with an unsupported claim
+  usable: 14           # baseline 15/15
+  admits_gap: 3        # of 3: an unanswerable question must never get a made-up answer

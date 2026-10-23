@@ -1,8 +1,10 @@
 """Code evaluators: exact checks against the golden answer. No model, so they're free and never vary.
 
-Each one is a plain function `(outputs, reference_outputs) -> bool`, the shape `langsmith.evaluate`
-accepts: outputs is what the agent returned (target.py), reference_outputs is the golden answer. The
-function's name becomes the score's name in LangSmith. SUITES says which checks run for each suite.
+Each one is a plain function `(outputs, reference_outputs)`, the shape `langsmith.evaluate` accepts:
+outputs is what the agent returned (target.py), reference_outputs is the golden answer. Most return
+True/False, and the function's name becomes the score's name in LangSmith. The search checks return
+{"key", "score"} with a score from 0 to 1, or None when they don't apply (a question the articles
+can't answer has no article to find). SUITES says which checks run for each suite.
 """
 
 import re
@@ -55,7 +57,34 @@ def steps_correct(outputs: dict, reference_outputs: dict) -> bool:
     return checked_steps(outputs.get("text", "")) == reference_outputs["steps"]
 
 
+def _cited_articles(outputs: dict) -> list[str]:
+    """The knowledge-base articles a reply cites, in search order (rules are cited in between)."""
+    return [c for c in outputs.get("citations", []) if c.startswith("KB-")]
+
+
+def recall_at_5(outputs: dict, reference_outputs: dict) -> dict:
+    """The share of the expected articles that the search returned among its 5 (1 = all found)."""
+    expected = reference_outputs.get("articles") or []
+    if not expected:
+        return {"key": "recall_at_5", "score": None}
+    top_5 = _cited_articles(outputs)[:5]
+    return {"key": "recall_at_5", "score": sum(a in top_5 for a in expected) / len(expected)}
+
+
+def mrr(outputs: dict, reference_outputs: dict) -> dict:
+    """How high the first expected article came: 1 if first, 0.5 if second, … 0 if not in the 5.
+    Averaged over the questions, this is the mean reciprocal rank (MRR)."""
+    expected = set(reference_outputs.get("articles") or [])
+    if not expected:
+        return {"key": "mrr", "score": None}
+    for rank, article_id in enumerate(_cited_articles(outputs)[:5], start=1):
+        if article_id in expected:
+            return {"key": "mrr", "score": 1 / rank}
+    return {"key": "mrr", "score": 0.0}
+
+
 SUITES = {
     "routing": [path_correct, procedure_correct],
+    "kb": [path_correct, recall_at_5, mrr],
     "walks": [path_correct, procedure_correct, action_correct, rules_correct, steps_correct, has_checklist],
 }
