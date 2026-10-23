@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableLambda
 from langchain_typesafe import ChoiceAnswer, ClassifierResponse
+from langchain_typesafe.client import TypeSafeAuthenticationError, TypeSafeInternalServerError, TypeSafeRateLimitError
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END
 
@@ -23,6 +25,7 @@ from agent.supervisor import (
     load_crm,
     _explain_history,
     _rule_wording,
+    _with_jev_retry,
     build_supervisor_graph,
     classify_intent,
     explain_answer,
@@ -226,6 +229,52 @@ def test_unknown_customer_is_answered_in_the_messages_without_calling_claude():
     assert [m.type for m in result["messages"]] == ["human", "ai"]
     assert "CUST-9999" in result["messages"][-1].content
     assert "intent" not in result
+
+
+# --- retrying Jev when it's busy ---
+
+
+def flaky_jev(*errors):
+    """A stand-in Jev that raises each of `errors` in turn, then answers "ok". Returns it and its call log."""
+    calls = []
+
+    def call(_request):
+        calls.append(1)
+        if len(calls) <= len(errors):
+            raise errors[len(calls) - 1]
+        return "ok"
+
+    return RunnableLambda(call), calls
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    """Retry without waiting, so the tests stay fast."""
+    monkeypatch.setattr("agent.supervisor._JEV_WAIT", {"initial": 0, "max": 0, "jitter": 0})
+
+
+def test_busy_jev_is_retried_until_it_answers(no_wait):
+    """529 Overloaded, then 429 Too Many Requests, then an answer: the call succeeds on the 3rd try."""
+    jev, calls = flaky_jev(TypeSafeInternalServerError(529, None, {}), TypeSafeRateLimitError(429, None, {}))
+    assert _with_jev_retry(jev).invoke({}) == "ok"
+    assert len(calls) == 3
+
+
+def test_jev_busy_three_times_gives_up(no_wait):
+    """After 3 tries the error reaches the caller, so the turn fails instead of waiting forever."""
+    busy = TypeSafeInternalServerError(529, None, {})
+    jev, calls = flaky_jev(busy, busy, busy)
+    with pytest.raises(TypeSafeInternalServerError):
+        _with_jev_retry(jev).invoke({})
+    assert len(calls) == 3
+
+
+def test_a_bad_jev_key_is_not_retried(no_wait):
+    """A wrong key fails the same way every time, so it fails at once."""
+    jev, calls = flaky_jev(TypeSafeAuthenticationError(401, None, {}))
+    with pytest.raises(TypeSafeAuthenticationError):
+        _with_jev_retry(jev).invoke({})
+    assert len(calls) == 1
 
 
 # --- classify_intent, with a fake Jev ---

@@ -48,7 +48,9 @@ from typing import Literal, Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import Runnable
 from langchain_typesafe import Choice, TypeSafeClassifier
+from langchain_typesafe.client import TypeSafeInternalServerError, TypeSafeRateLimitError
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
@@ -82,16 +84,35 @@ _MIN_PROCEDURE_CONFIDENCE = 0.5  # below this, no procedure is walked
 
 _NO_PROCEDURE = "none"
 
+# Jev sometimes answers 529 Overloaded (its servers are busy for everyone) or 429 (we sent too many
+# requests). Both usually pass within seconds, and langchain-typesafe doesn't retry by itself, so
+# without this one busy moment fails the consultant's message. Each Jev call gets up to 3 tries,
+# waiting about 0.5 s, then 1 s (plus a little random jitter, so callers don't all retry at once).
+# Other errors (a bad key, a bad request) fail at once: trying again wouldn't fix them.
+_JEV_RETRY_ON = (TypeSafeInternalServerError, TypeSafeRateLimitError)  # any 5xx (incl. 529), and 429
+_JEV_TRIES = 3
+_JEV_WAIT = {"initial": 0.5, "max": 4, "jitter": 0.5}  # seconds
+
+
+def _with_jev_retry(classifier: Runnable) -> Runnable:
+    """The classifier, retried when Jev is busy (see _JEV_RETRY_ON)."""
+    return classifier.with_retry(
+        retry_if_exception_type=_JEV_RETRY_ON,
+        stop_after_attempt=_JEV_TRIES,
+        wait_exponential_jitter=True,
+        exponential_jitter_params=_JEV_WAIT,
+    )
+
 
 @lru_cache(maxsize=1)
-def _classifier() -> TypeSafeClassifier:
-    """The Jev client, made once and reused.
+def _classifier() -> Runnable:
+    """The Jev client, made once and reused, retried when Jev is busy.
 
     lru_cache on a no-argument function means: run it on the first call, then return the same result.
     Lazy, because TypeSafeClassifier() raises without TYPESAFE_API_KEY, so building it at import would
     break importing this module (unit tests, Slack bot). Reused, because it holds an HTTP connection pool.
     """
-    return TypeSafeClassifier()
+    return _with_jev_retry(TypeSafeClassifier())
 
 
 @lru_cache(maxsize=1)
