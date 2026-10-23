@@ -224,26 +224,11 @@ Jev gives a probability of "yes" for each question, and 0.5 or more counts as ye
 
 **Baseline (3 runs):** recall 36/36, MRR 0.96, facts 0.94, supported 45/45, no contradictions, unanswerable admitted 9/9.
 
-What the misses mean:
+**Misses:** the fee question's article (KB-005) is found but ranked 2nd, behind the cancellation article (MRR 0.96). In 4 of 36 answers Claude left out a key fact, and Jev was right each time (checked by reading them). 2 were close calls (0.39, 0.45), to check in step 5.
 
-- **MRR 0.96, not 1:** for the fee question, the search ranks the cancellation article first and the fee article (which has the answer) second, every time. It's found and the answer is right, just not at the top: a small, real ranking weakness.
-- **Facts 0.94, not 1:** in 4 of 36 answers, Jev said a key fact was missing. Reading them, it really was, e.g. a suspension answer never said bank transfers take 1–3 days. So Claude left a detail out; the judge was right.
-- **2 close calls:** for 2 of those facts, Jev's "stated" probability was 0.39 and 0.45. It was right, but unsure. Step 5 (calibration) checks whether 0.5 is the right line.
+**Can we trust Jev?** Given 6 answers whose verdict we already knew (1 correct; 5 with wrong facts, vague, or made up), Jev judged all 6 right, and was sure each time. So high scores mean good answers, not a judge that says yes to everything (`tests/e2e/judges/`, run it after changing a judge's wording).
 
 **To change a question:** edit `ANSWERABLE` / `UNANSWERABLE` in `build_kb.py`, then run `uv run python -m eval.offline.build_kb`.
-
-### How Jev performed as a judge
-
-`tests/e2e/judges/` tests **the judge, not the agent**: it gives Jev answers whose verdict we already know, and checks that Jev scores them right. Run it after changing a judge's wording.
-
-| Answer given to Jev | Jev's numbers | Right? |
-| --- | --- | --- |
-| the agent's real answers (3 runs) | facts stated: median 0.99 (the low ones were real misses), contradicts 0.02–0.12, unsupported 0.07–0.37, admits the gap 0.98–0.99 | ✅ pass |
-| wrong facts ("the first two replacements are free") | facts stated 0.02–0.04, contradicts 0.99, unsupported 0.99 | ✅ caught |
-| vague ("check the policy for details") | facts stated 0.02–0.04, but contradicts 0.04, unsupported 0.11 | ✅ "not usable, but not wrong" |
-| made up for an unanswerable question ("the fee is $25") | admits the gap 0.01, unsupported 0.98–0.99 | ✅ caught |
-
-What this means: Jev clearly tells good answers from bad ones, with no borderline scores on these cases, and it doesn't confuse "vague" with "wrong". So a high knowledge-base score reflects the answers, not a judge that says yes to everything.
 
 ### Coming next
 
