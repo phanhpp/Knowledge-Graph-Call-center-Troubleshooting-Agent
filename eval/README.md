@@ -53,6 +53,40 @@ uv run pytest tests/eval                                         # no keys: orac
 
 `run.py` needs what the agent needs (Neo4j with the graph and articles loaded, and the model keys) and makes real model calls.
 
+### How a suite is chosen
+
+```
+                         run.py --suite <name>
+                                  │
+                                  │ looks up <name> in 3 files
+       ┌──────────────────────────┼──────────────────────────┐
+       ▼                          ▼                          ▼
+ datasets/<name>.jsonl     evaluators/code.py         thresholds.yaml
+ the examples +            SUITES["<name>"]           "<name>:" section
+ right answers             which checks to run        minimum passes
+       │                          │                          │
+       │ run.py uploads it        │                          │
+       ▼                          │                          │
+ LangSmith dataset                │                          │
+       │                          │                          │
+       └────────────┐             │                          │
+                    ▼             │                          │
+               target.py          │                          │
+         runs each example        │                          │
+         through the real         │                          │
+         agent graph              │                          │
+         (same for every suite)   │                          │
+                    │             │                          │
+                    ▼             ▼                          │
+          reply + state ──► checks compare it                │
+                            with the right answer            │
+                                  │                          │
+                                  ▼                          ▼
+                     LangSmith experiment + table ──► gate pass / fail
+```
+
+`run.py` is the only file that knows the suite name; the others are looked up by it. `target.py` just runs the graph and returns everything (reply text, citations, intent, procedure, …); each suite's checks read only what they need. `--suite all` runs every suite that has a `datasets/<name>.jsonl`. Adding a suite means a new JSONL file, a `SUITES` entry and a `thresholds.yaml` section.
+
 ### How a run works (the walks suite)
 
 ```
@@ -85,6 +119,24 @@ uv run pytest tests/eval                                         # no keys: orac
 - **Gate:** `--gate` fails if a check is below its threshold in `thresholds.yaml`.
 - **Crashes:** a run that crashed (e.g. Jev returning 529 Overloaded) is listed as errored, not counted as a wrong answer, and the gate asks you to rerun.
 - **Comparing versions:** open both experiments in LangSmith (Datasets & Experiments → the dataset → Compare).
+
+### When Jev fails
+
+TypeSafe's API (Jev) is in early access, and it wasn't always stable: in one run 7 of 20 messages got **529 Overloaded** (its servers busy for everyone, not our volume), and in a 72-run repeat 2 runs failed while **connecting**: once the server hung up mid-handshake, once the handshake got no reply. Both happened before Jev saw the question.
+
+So the agent retries every Jev call up to 3 times (about 0.5 s, then 1 s apart) on the errors that pass by themselves, with a 10 s timeout per try (the package's default is 30 s). The error classes come from the `langchain-typesafe` package; `_JEV_RETRY_ON` in `agent/supervisor.py` picks which ones to retry.
+
+| Error (`langchain_typesafe.client`) | When | Retried? |
+| --- | --- | --- |
+| `TypeSafeInternalServerError` | any 5xx, including 529 Overloaded | ✅ |
+| `TypeSafeRateLimitError` | 429, too many requests from us | ✅ |
+| `TypeSafeAPIConnectionError` | no answer at all, e.g. the connection dropped | ✅ |
+| `TypeSafeAPITimeoutError` | no answer within 10 s | ✅ |
+| `TypeSafeAuthenticationError` | 401, wrong key | ❌ fails at once |
+| `TypeSafeBadRequestError`, `TypeSafeUnprocessableEntityError` | 400, 422: a malformed request | ❌ |
+| `TypeSafePermissionDeniedError`, `TypeSafeNotFoundError` | 403, 404 | ❌ |
+
+The ❌ errors would fail the same way every time, so retrying them would only add waiting. A run that still fails after 3 tries is listed as errored in the eval, and the gate asks for a rerun.
 
 ### Walks suite (20 examples)
 
