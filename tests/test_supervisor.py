@@ -10,7 +10,13 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_typesafe import ChoiceAnswer, ClassifierResponse
-from langchain_typesafe.client import TypeSafeAuthenticationError, TypeSafeInternalServerError, TypeSafeRateLimitError
+from langchain_typesafe.client import (
+    TypeSafeAPIConnectionError,
+    TypeSafeAPITimeoutError,
+    TypeSafeAuthenticationError,
+    TypeSafeInternalServerError,
+    TypeSafeRateLimitError,
+)
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END
 
@@ -25,6 +31,8 @@ from agent.supervisor import (
     load_crm,
     _explain_history,
     _rule_wording,
+    _JEV_TIMEOUT,
+    _classifier,
     _with_jev_retry,
     build_supervisor_graph,
     classify_intent,
@@ -267,6 +275,28 @@ def test_jev_busy_three_times_gives_up(no_wait):
     with pytest.raises(TypeSafeInternalServerError):
         _with_jev_retry(jev).invoke({})
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize("error", [
+    TypeSafeAPIConnectionError("Unable to connect to the TypeSafe API."),  # e.g. dropped while connecting
+    TypeSafeAPITimeoutError(10.0),  # no answer in time
+])
+def test_a_failed_connection_to_jev_is_retried(no_wait, error):
+    """Jev never answered, so trying again is safe: the second try succeeds."""
+    jev, calls = flaky_jev(error)
+    assert _with_jev_retry(jev).invoke({}) == "ok"
+    assert len(calls) == 2
+
+
+def test_jev_client_gives_up_on_a_call_after_10_seconds(monkeypatch):
+    """The timeout reaches the real client, so 3 tries can't keep a consultant waiting 90 s."""
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    _classifier.cache_clear()
+    try:
+        assert _JEV_TIMEOUT == 10
+        assert _classifier().bound.timeout == _JEV_TIMEOUT
+    finally:
+        _classifier.cache_clear()  # don't leave a client with the fake key for other tests
 
 
 def test_a_bad_jev_key_is_not_retried(no_wait):

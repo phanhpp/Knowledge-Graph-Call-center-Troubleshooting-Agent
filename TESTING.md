@@ -4,7 +4,7 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 
 | Layer | Tool | Where | Tests | Needs |
 |---|---|---|---|---|
-| Agent, data, Slack bot | pytest | `tests/` | 252 (227 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
+| Agent, data, Slack bot | pytest | `tests/` | 255 (230 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
 | Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
@@ -39,7 +39,7 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 | `test_validate.py` | 7 | `etl.validate`: IDs and fields match across the data files; every procedure can finish (no cycles, all steps reachable, a fallback action on the last step) |
 | `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
 | `test_procedural_executor.py` | 16 | the troubleshooting walk: fetching steps, advancing or resolving, the reply format ("Why:" and the checked steps), ticket conditions read by Claude. Pins the infinite-loop bug fixed by routing with a `Command` |
-| `test_supervisor.py` | 43 | the main graph: customer checks, the Neo4j check, routing with a fake Jev, Jev retried when busy (529, 429) but not on a bad key, `load_crm`, and `explain`: the history labels, a label copied by Claude removed, never claiming an earlier answer was wrong |
+| `test_supervisor.py` | 46 | the main graph: customer checks, the Neo4j check, routing with a fake Jev, Jev retried when busy (529, 429) or the connection fails (dropped, timed out after 10 s) but not on a bad key, `load_crm`, and `explain`: the history labels, a label copied by Claude removed, never claiming an earlier answer was wrong |
 | `test_graph_rag_chain.py` | 3 | the knowledge-base path: hybrid search, graph grounding, the answer and its citations (needs keys) |
 | `test_sources.py` | 12 | the text behind each cited ID (short on replies, full on request), and `reply()`: citations unchanged, sources added, the run id is the turn's **root** run |
 | `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
@@ -98,7 +98,7 @@ Two GitHub Actions workflows, both without secrets.
 | Job | Runs |
 |---|---|
 | `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
-| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 221 pass, 6 skip because they need API keys |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 224 pass, 6 skip because they need API keys |
 
 **`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
 
@@ -126,5 +126,5 @@ Testing doesn't stop at deployment. Every real conversation is scored in LangSmi
 | A vote overwritten while still being sent | `use-feedback.test.ts` |
 | Custom routes answering without the API key | `deploy/smoke.py` |
 | A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
-| One busy moment at Jev (529 Overloaded) failing a consultant's message | `test_supervisor.py` (retried up to 3 times) |
+| One busy moment at Jev (529 Overloaded) or a dropped connection failing a consultant's message | `test_supervisor.py` (retried up to 3 times, 10 s timeout) |
 | A Jev outage counted as wrong answers in the offline eval | `eval/test_offline_walks.py` (errored runs ask for a rerun) |
