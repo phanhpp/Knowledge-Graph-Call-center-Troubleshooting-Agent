@@ -56,5 +56,6 @@ def steps_correct(outputs: dict, reference_outputs: dict) -> bool:
 
 
 SUITES = {
+    "routing": [path_correct, procedure_correct],
     "walks": [path_correct, procedure_correct, action_correct, rules_correct, steps_correct, has_checklist],
 }

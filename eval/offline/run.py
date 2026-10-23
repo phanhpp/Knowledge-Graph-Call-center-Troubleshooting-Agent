@@ -9,8 +9,9 @@ For each suite it:
      file updates it in LangSmith, and deleting it from the file deletes it there too;
   2. runs every example through the agent (target.py) and scores it (evaluators/), saved as a
      LangSmith experiment named `<suite>-<tag>`: open two experiments side by side to compare versions;
-  3. prints how many examples passed each check, which failed, and the latency, and saves the same
-     to results/<suite>-<tag>.json. With --gate, it exits with an error if a check is below its threshold.
+  3. prints how many examples passed each check, which failed and where they went instead, how each
+     slice did (e.g. routing's "typo" examples), and the latency, and saves the same to
+     results/<suite>-<tag>.json. With --gate, it exits with an error if a check is below its threshold.
 
 If a run crashes (e.g. a model API returns 529 Overloaded), there is no reply to score. It is listed
 as "errored", not counted as a wrong answer: an outage is not a quality drop. The gate still fails
@@ -87,6 +88,15 @@ def git_sha() -> str:
         return "unknown"
 
 
+def went(outputs: dict, expected: dict) -> str:
+    """Where a failing example went, next to where it should have gone, e.g.
+    "expected troubleshooting / PROC-018, got troubleshooting / PROC-020"."""
+    def place(path, procedure_id):
+        return f"{path} / {procedure_id or 'no procedure'}"
+    return (f"expected {place(expected.get('path'), expected.get('procedure_id'))}, "
+            f"got {place(outputs.get('intent'), outputs.get('matched_procedure_id'))}")
+
+
 def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
     """Run one suite as a LangSmith experiment. Returns its summary: how many passed each check,
     which examples failed, which errored, and latency."""
@@ -112,6 +122,8 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
     total: dict[str, int] = defaultdict(int)
     failures: dict[str, list[str]] = defaultdict(list)
     errored: dict[str, str] = {}
+    missed: dict[str, str] = {}  # golden id -> where it went, for examples that failed a check
+    slices: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # slice -> [passed every check, runs]
     latencies = []
     for row in results:
         golden_id = (row["example"].metadata or {}).get("golden_id", str(row["example"].id))
@@ -121,12 +133,20 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
             continue
         if run.end_time and run.start_time:
             latencies.append((run.end_time - run.start_time).total_seconds())
+        passed_all = True
         for result in row["evaluation_results"]["results"]:
             total[result.key] += 1
             if result.score:
                 passed[result.key] += 1
             else:
                 failures[result.key].append(golden_id)
+                passed_all = False
+        if not passed_all:
+            missed[golden_id] = went(run.outputs or {}, row["example"].outputs or {})
+        slice_name = (row["example"].metadata or {}).get("slice")
+        if slice_name:
+            slices[slice_name][0] += passed_all
+            slices[slice_name][1] += 1
 
     summary = {
         "suite": suite,
@@ -137,6 +157,8 @@ def run_suite(suite: str, tag: str, repetitions: int, concurrency: int) -> dict:
         "checks": {key: {"passed": passed[key], "total": total[key]} for key in total},
         "failures": {key: sorted(set(ids)) for key, ids in failures.items()},
         "errored": dict(sorted(errored.items())),
+        "missed": dict(sorted(missed.items())),
+        "slices": {name: {"passed": counts[0], "total": counts[1]} for name, counts in slices.items()},
         "latency_s": {
             "p50": round(statistics.median(latencies), 2) if latencies else None,
             "p95": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 2) if latencies else None,
@@ -153,6 +175,10 @@ def print_summary(summary: dict) -> None:
     for key, counts in summary["checks"].items():
         failing = summary["failures"].get(key, [])
         print(f"  {key:24} {counts['passed']:>3}/{counts['total']:<3}{'  failing: ' + ', '.join(failing) if failing else ''}")
+    for golden_id, where in summary.get("missed", {}).items():
+        print(f"  missed                   {golden_id}: {where}")
+    if summary.get("slices"):
+        print("  by slice (all checks)    " + ", ".join(f"{name} {c['passed']}/{c['total']}" for name, c in summary["slices"].items()))
     for golden_id, error in summary.get("errored", {}).items():
         print(f"  errored (not scored)     {golden_id}: {error}")
     print(f"  latency p50 {summary['latency_s']['p50']}s, p95 {summary['latency_s']['p95']}s")

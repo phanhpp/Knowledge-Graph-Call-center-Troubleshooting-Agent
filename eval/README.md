@@ -21,8 +21,9 @@ eval/
 │       ├── dry_run.py                        try the checks on real traces, locally
 │       └── build_valid_ids.py                refresh citations_exist.py's ID list after data/ changes
 └── offline/
-    ├── datasets/walks.jsonl                  golden examples (reviewed, in git)
+    ├── datasets/*.jsonl                      golden examples, one file per suite (reviewed, in git)
     ├── build_walks.py                        writes walks.jsonl
+    ├── build_routing.py                      writes routing.jsonl
     ├── oracle.py                             works out a walk's correct answer from data/
     ├── target.py                             runs one example through the real agent
     ├── evaluators/code.py                    exact checks against the golden answer
@@ -80,7 +81,7 @@ uv run pytest tests/eval                                         # no keys: orac
  LangSmith experiment  +  a table in the terminal  +  gate (pass/fail)
 ```
 
-- **Results:** the table (pass counts, failing examples, latency) is also saved to `results/<suite>-<tag>.json`, which isn't in git.
+- **Results:** the table (pass counts, each failing example with where it went instead, a pass count per slice, latency) is also saved to `results/<suite>-<tag>.json`, which isn't in git.
 - **Gate:** `--gate` fails if a check is below its threshold in `thresholds.yaml`.
 - **Crashes:** a run that crashed (e.g. Jev returning 529 Overloaded) is listed as errored, not counted as a wrong answer, and the gate asks you to rerun.
 - **Comparing versions:** open both experiments in LangSmith (Datasets & Experiments → the dataset → Compare).
@@ -125,6 +126,26 @@ For the 3 procedures that read a ticket, the oracle can't judge the ticket's tex
 
 **To change a walk:** edit `WALKS` in `build_walks.py`, run `uv run python -m eval.offline.build_walks`, and review the diff of `walks.jsonl`.
 
+### Routing suite (24 examples)
+
+Does each message go to the right place? Routing is two Jev decisions: the path (troubleshooting, general question or explain), then, for troubleshooting, the procedure (or none, and the knowledge base answers). The checks are `path_correct` and `procedure_correct`, exact matches, so Jev never grades its own routing.
+
+There's no oracle here: each answer comes from the procedures' `when_to_use` text, and `build_routing.py` checks every example against the data (the procedure and customer exist, each pair covers two procedures, no repeats).
+
+| Slice | Examples | What it tests |
+| --- | --- | --- |
+| `procedure-pair` | 14 | 7 pairs of easily confused procedures, one message each, e.g. can't switch roaming on (PROC-001) vs no signal abroad (PROC-014) |
+| `policy-twin` | 4 | the same topics as general questions ("how much does a replacement SIM cost?"): the knowledge base must answer |
+| `general-with-customer` | 1 | a general question that still names a customer |
+| `near-miss` | 1 | a message that went to the wrong procedure before |
+| `typo` | 2 | misspelt messages, typed in a hurry |
+| `no-procedure` | 1 | a real problem no procedure covers |
+| `off-topic` | 1 | nothing to do with the job |
+
+**Baseline:** path 24/24, procedure 23/24, the same in 3 repeated runs. The one miss: "…hasn't tried resetting the password" goes to PROC-020 (login fails *after* a reset) instead of PROC-018 (locked out).
+
+**To change an example:** edit `ROUTES` in `build_routing.py` and run `uv run python -m eval.offline.build_routing`.
+
 ### Coming next
 
-Routing (20), knowledge base (15, scored by Jev judges), conversations (6), guards (4) and adversarial (6).
+Knowledge base (15, scored by Jev judges), conversations (6), guards (4) and adversarial (6).
