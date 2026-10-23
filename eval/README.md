@@ -194,39 +194,37 @@ Checks: `path_correct`, `procedure_correct`.
 
 General questions answered from the articles: 12 the articles answer (all 9 categories), 3 they don't (e.g. "the exact SIM fee amount": the article mentions the fee, not the amount). Each answerable question has its article and 2–3 key facts taken from the article's text.
 
-
-| Check              | Type | Question                                                    |
-| ------------------ | ---- | ----------------------------------------------------------- |
-| `path_correct`     | code | Did it go to the knowledge base?                            |
-| `recall_at_5`      | code | Was the right article among the 5 the search returned?      |
-| `mrr`              | code | How high? 1 if first, 0.5 if second… (mean = MRR)           |
-| `facts_covered`    | Jev  | Share of the key facts the answer states                    |
-| `no_contradiction` | Jev  | Does it agree with the reference answer?                    |
-| `supported`        | Jev  | Is everything it says in the articles?                      |
-| `usable`           | Jev  | Could a consultant use it on a live call?                   |
-| `admits_gap`       | Jev  | Unanswerable only: does it say the articles don't cover it? |
-
-
 **How a question is scored:**
 
 ```
  question ──► real agent ──► search finds 5 articles ──► Claude writes the answer
-                                     │                           │
-                     code checks ◄───┘                           └───► ONE Jev call
-                     recall_at_5: right article in the 5?             Jev reads: question, reference,
-                     mrr: how high? (1st = 1, 2nd = 0.5)               answer, the 5 articles as Claude
-                                                                       saw them
-                                                                       → facts_covered, no_contradiction,
-                                                                         supported, usable, admits_gap
+                                     │                              │
+                                     ▼                              ▼
+                       CODE CHECKS (the search)          ONE JEV CALL (the answer)
+                       recall_at_5  is the right         Jev reads: the question, the reference
+                                    article in the 5?    answer, the answer, the 5 articles
+                       mrr          how high was it?
+                                    (#1 = 1, #2 = 0.5)   and says how likely "yes" is for each:
+                                                           ├─ facts_covered     states each key fact?
+                                                           ├─ no_contradiction  agrees with the reference?
+                                                           ├─ supported         everything it says is
+                                                           │                    in the articles?
+                                                           ├─ usable            usable on a live call?
+                                                           └─ admits_gap        says the articles don't
+                                                                                cover it? (only for the
+                                                                                3 unanswerable questions)
+                                                         0.5 or more counts as yes
 ```
 
-Jev gives a probability of "yes" for each question, and 0.5 or more counts as yes. It must see the articles **exactly as Claude saw them**, including "Policy rules cited by this article". Without that line, an answer naming a rule looked made up. Each score's comment keeps Jev's raw numbers. The wording of `supported` and `usable` matches the live LangSmith judges.
+Also `path_correct`: did the question go to the knowledge base? Jev sees the articles **exactly as Claude saw them**, including "Policy rules cited by this article". Without that line, an answer naming a rule looked made up.
 
 **Baseline (3 runs):** recall 36/36, MRR 0.96, facts 0.94, supported 45/45, no contradictions, unanswerable admitted 9/9.
 
-**Misses:** the fee question's article (KB-005) is found but ranked 2nd, behind the cancellation article (MRR 0.96). In 4 of 36 answers Claude left out a key fact, and Jev was right each time (checked by reading them). 2 were close calls (0.39, 0.45), to check in step 5.
+- **MRR** measures how high the correct article ranked in the search results. **Result (0.96):** almost every question returned the right article at the very top (#1). Only the fee question's article (KB-005) came #2, behind the cancellation article.
+- **Facts (0.94):** in 4 of 36 answers Claude left out a key fact, and Jev was right each time (checked by reading them).
+- **Close calls:** Jev gives the probability that a fact is stated, and 0.5 or more counts as stated. For 2 of those missing facts it gave 0.39 and 0.45. That's right (missing), but close to 0.5, so Jev was unsure. Step 5 checks whether 0.5 is the right line.
 
-**Can we trust Jev?** Given 6 answers whose verdict we already knew (1 correct; 5 with wrong facts, vague, or made up), Jev judged all 6 right, and was sure each time. So high scores mean good answers, not a judge that says yes to everything (`tests/e2e/judges/`, run it after changing a judge's wording).
+**Can we trust Jev?** Given 6 answers whose verdict we already knew (1 correct; 5 with wrong facts, vague, or made up), Jev judged all 6 right, and was sure each time. So high scores mean good answers, not a judge that says yes to everything (`tests/e2e/judges/`; run it after changing a judge's wording).
 
 **To change a question:** edit `ANSWERABLE` / `UNANSWERABLE` in `build_kb.py`, then run `uv run python -m eval.offline.build_kb`.
 
