@@ -1,7 +1,8 @@
-"""Deterministic evaluators: exact checks against the golden answer, no model, no cost.
+"""Code evaluators: exact checks against the golden answer. No model, so they're free and never vary.
 
-Each is a plain function `(outputs, reference_outputs) -> bool`, the shape `langsmith.evaluate`
-accepts; its name becomes the feedback key in the experiment. SUITES lists which run for each suite.
+Each one is a plain function `(outputs, reference_outputs) -> bool`, the shape `langsmith.evaluate`
+accepts: outputs is what the agent returned (target.py), reference_outputs is the golden answer. The
+function's name becomes the score's name in LangSmith. SUITES says which checks run for each suite.
 """
 
 import re

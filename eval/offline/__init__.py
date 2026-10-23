@@ -1,1 +1,2 @@
-"""Offline end-to-end evaluation with golden datasets. See eval/offline_eval_plan.md."""
+"""Offline evaluation: golden examples run end to end through the real agent and scored, as
+LangSmith experiments. See eval/README.md."""

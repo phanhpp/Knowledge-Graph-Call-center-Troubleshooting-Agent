@@ -1,19 +1,20 @@
-"""The expected outcome of a troubleshooting walk, computed from data/ alone: the answer key for the
-walks suite.
+"""The answer key for the walks suite: for a procedure and a customer, what should the walk do?
 
-Independent of the agent's walk code (agent/procedural_executor.py, Neo4j): it re-implements only
-the traversal rule, straight from data/procedures.json:
+It works this out from data/ alone, without running the agent:
 
-    start at step 1; a step's condition YES -> that step's action, stop;
-    NO -> the step's next_step; NO on the last step -> its action_if_false_id.
+    start at step 1. If the step's condition is YES, the answer is that step's action: stop.
+    If it's NO, go to the next step. If the last step is NO too, the answer is that step's
+    fallback action (action_if_false_id).
 
-The condition values come from the mock CRM (mock_crm/), the stand-in for the real CRM APIs: it is
-the source of truth for the customer's facts, so reusing it is not checking the agent against itself.
-A ticket condition is the exception: whether a free-text ticket answers its question is judgement,
-so its value is a human label given with the example (no ticket on file is NO, as in the agent).
-
-The rules are those whose applies_to_action_ids list the action (data/rules.json), which is what the
-graph's GOVERNED_BY edges are loaded from.
+Where each fact comes from:
+  - A normal condition (e.g. "roaming is off") is checked in the mock CRM (mock_crm/), the stand-in
+    for the real CRM that the agent also calls. The CRM is the source of truth for facts, and the walk
+    logic here is written separately from the agent's, so this is not the agent grading itself.
+  - A ticket condition (e.g. "does the ticket say the issue is still happening?") needs a person to
+    read free text, so its answer is a human label stored with the example. A customer with no ticket
+    on file gets NO, as in the agent.
+  - The rules for an action are those in data/rules.json that list it in applies_to_action_ids (the
+    same data the graph's GOVERNED_BY edges are built from).
 """
 
 from functools import lru_cache
@@ -25,13 +26,13 @@ from mock_crm.crm_store import get_customer
 
 @lru_cache(maxsize=1)
 def procedures() -> dict[str, dict]:
-    """data/procedures.json by procedure_id."""
+    """Every procedure in data/procedures.json, by ID (e.g. "PROC-001")."""
     return {p["procedure_id"]: p for p in load_json("procedures.json")}
 
 
 @lru_cache(maxsize=1)
 def rules_for_action() -> dict[str, list[str]]:
-    """action_id -> the IDs of the rules governing it, sorted."""
+    """For each action, the IDs of the rules that govern it, e.g. {"ACT-016": ["R001", "R003", "R006"]}."""
     by_action: dict[str, list[str]] = {}
     for rule in load_json("rules.json"):
         for action_id in rule["applies_to_action_ids"]:
@@ -40,11 +41,13 @@ def rules_for_action() -> dict[str, list[str]]:
 
 
 def is_ticket_condition(condition_id: str) -> bool:
+    """True if answering this condition means reading a ticket's free text (kind "ticket_text")."""
     return get_condition(condition_id).get("kind") == "ticket_text"
 
 
 def condition_value(customer: dict, condition_id: str, ticket_labels: dict[str, bool]) -> bool:
-    """One condition for one customer: from the mock CRM, or a ticket condition's human label."""
+    """Is this condition YES for this customer? A normal condition is checked in the mock CRM; a
+    ticket condition uses its human label (and is NO when the customer has no ticket)."""
     condition = get_condition(condition_id)
     if condition.get("kind") != "ticket_text":
         return resolve_condition(customer, condition)
@@ -56,10 +59,15 @@ def condition_value(customer: dict, condition_id: str, ticket_labels: dict[str, 
 
 
 def expected_walk(procedure_id: str, customer_id: str, ticket_labels: dict[str, bool] | None = None) -> dict:
-    """The walk's expected result for this procedure and customer.
+    """What the walk should do for this procedure and customer.
 
-    Returns {"procedure_id", "action_id", "rule_ids", "steps": [[step_id, result], ...], "exit"},
-    where exit is "first-yes" (step 1 found the cause), "later-yes" or "fallback" (every step NO).
+    ticket_labels holds the human answer for each ticket condition the walk reaches,
+    e.g. {"COND-024": True}. Returns:
+        action_id: the action the walk should end at
+        rule_ids:  the rules that govern that action
+        steps:     each step checked, in order, with its answer, e.g. [[1, False], [2, True]]
+        exit:      "first-yes" (step 1 found the cause), "later-yes" (a later step did) or
+                   "fallback" (every step said NO)
     """
     procedure = procedures()[procedure_id]
     customer = get_customer(customer_id)
@@ -93,6 +101,6 @@ def expected_walk(procedure_id: str, customer_id: str, ticket_labels: dict[str, 
 
 
 def ticket_conditions_checked(procedure_id: str, steps: list[list]) -> list[str]:
-    """The ticket conditions among the steps a walk checked."""
+    """The ticket conditions this walk reached: the ones that need a human label."""
     by_id = {step["step_id"]: step for step in procedures()[procedure_id]["steps"]}
     return [by_id[step_id]["condition_id"] for step_id, _ in steps if is_ticket_condition(by_id[step_id]["condition_id"])]

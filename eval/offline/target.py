@@ -1,13 +1,15 @@
-"""Runs one golden example through the real agent graph, end to end, for `langsmith.evaluate`.
+"""Sends one golden example through the real agent, in the shape `langsmith.evaluate` expects.
 
-An example's inputs are either one message ({"message", "customer_id"}) or a conversation
-({"turns": [{"text", "customer_id"}, ...]}). Each runs on a fresh thread of an in-process graph
-with an in-memory checkpointer, so follow-ups see the earlier turns, exactly as in Slack or the web
-app. Needs what the agent needs: Neo4j with the graph and articles loaded, and the model keys.
+An example is one message ({"message", "customer_id"}) or a conversation
+({"turns": [{"text", "customer_id"}, ...]}). Each example gets its own new thread, so examples never
+see each other; the turns of one conversation do see the earlier turns, as in Slack or the web app.
 
-The output of a turn is what the evaluators read: the reply (text, citations, sources), the state
-the turn ended in (intent, matched procedure, current customer, error), and how many model calls it
-made (Claude and Jev), counted with a LangChain callback.
+For each turn it returns what the evaluators look at:
+  - the reply: text, citations, sources;
+  - where the turn ended up: intent (the path), matched procedure, current customer, error;
+  - model_calls: how many model calls (Claude and Jev) the turn made, counted by a callback.
+
+Needs what the agent needs: Neo4j with the graph and articles loaded, and the model keys.
 """
 
 import uuid
@@ -22,7 +24,8 @@ from agent.utils import consultant_message
 
 
 class _ModelCalls(BaseCallbackHandler):
-    """Counts model calls (chat models and other LLMs, which covers Claude and Jev) in one run."""
+    """Counts the model calls in one turn. LangChain calls on_chat_model_start for chat models
+    (Claude) and on_llm_start for other models (Jev), so counting both covers every call."""
 
     def __init__(self) -> None:
         self.count = 0
@@ -36,12 +39,12 @@ class _ModelCalls(BaseCallbackHandler):
 
 @lru_cache(maxsize=1)
 def _graph():
-    """One compiled graph for the whole run; every example gets its own thread."""
+    """The agent graph, built once and shared by every example (each example uses its own thread)."""
     return build_supervisor_graph(checkpointer=InMemorySaver())
 
 
 def _turn(thread_id: str, text: str, customer_id: str | None) -> dict:
-    """Send one consultant message and return what the evaluators read."""
+    """Send one consultant message on this thread and return what the evaluators look at."""
     calls = _ModelCalls()
     state = _graph().invoke(
         {"messages": [consultant_message(text, customer_id)]},
@@ -62,7 +65,8 @@ def _turn(thread_id: str, text: str, customer_id: str | None) -> dict:
 
 
 def target(inputs: dict) -> dict:
-    """One example: a single message -> one turn's output; a conversation -> {"turns": [...]}."""
+    """Run one example on a new thread. A single message returns one turn's output; a
+    conversation returns {"turns": [one output per turn]}."""
     thread_id = str(uuid.uuid4())
     if "turns" in inputs:
         return {"turns": [_turn(thread_id, t["text"], t.get("customer_id")) for t in inputs["turns"]]}

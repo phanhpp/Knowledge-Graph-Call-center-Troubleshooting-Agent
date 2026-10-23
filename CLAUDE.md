@@ -72,7 +72,7 @@ agent/     — state.py (graph state only), supervisor.py, procedural_executor.p
 mock_crm/  — crm_store.py, condition_evaluator.py, lookup stores
 slack_bot/ — the Slack front end (Bolt, Socket Mode)
 web/       — the Next.js web app (proxy route to the agent, password gate, Vitest + Playwright)
-eval/      — evaluation plan and the online code evaluators
+eval/      — online code evaluators (online/) and the offline evaluation (offline/); the plans are docs/eval_plan.md and docs/offline_eval_plan.md
 ```
 
 ETL loads via Python driver batch writes (`UNWIND $rows AS row CALL (row) {...} IN TRANSACTIONS`), not `apoc.load.json` — the data is already Python-validated local JSON, not something Neo4j needs to fetch itself. Uniqueness/node-key constraints on every `MERGE`-targeted label are created before import (see `docs/proposed_plan.md` Phase 2).

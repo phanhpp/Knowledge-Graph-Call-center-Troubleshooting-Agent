@@ -1,106 +1,85 @@
-"""Drafts the walks suite (eval/offline/datasets/walks.jsonl): one example per procedure, for review.
+"""Builds the walks suite (datasets/walks.jsonl): one troubleshooting example per procedure.
 
     uv run python -m eval.offline.build_walks
 
-For each procedure it computes, with the oracle, how the walk ends for every customer, then picks one
-customer so the suite's exits vary (step 1 finds the cause / a later step does / every step says NO).
-For the 3 ticket-reading procedures it picks a customer whose ticket is actually read, so the suite
-exercises the one model-based check; only unambiguous tickets are labelled (TICKET_LABELS below).
+Each walk below is a hand-checked (procedure, customer, message) triple. The customer is chosen so:
+  - the message fits their CRM record ("prepaid" goes to a prepaid customer, "service was suspended"
+    to the suspended account, "plan hasn't started" to a pending plan) and their ticket, if any;
+  - the 20 customers differ: payment method, account, plan and SIM status, tenure, device;
+  - the walks end in different ways: step 1 finds the cause / a later step does / every step says NO.
+The expected action, rules and steps are not typed in here: the oracle works them out from data/.
 
-The result is a DRAFT: review it (the messages, the chosen customers, the ticket labels) before it
-becomes the answer key. Re-running overwrites walks.jsonl, so edit this script, not the file.
+The 3 procedures that read the customer's latest ticket carry a human label: does that ticket
+answer the condition's question? Re-running overwrites walks.jsonl, so edit this script, not the file.
 """
 
 import json
 from pathlib import Path
 
 from eval.offline.oracle import expected_walk, procedures, ticket_conditions_checked
-from etl.io_utils import load_json
+from mock_crm.crm_store import get_customer
 
 OUT = Path(__file__).resolve().parent / "datasets" / "walks.jsonl"
 
-# What a consultant would type for each procedure's typical case.
-MESSAGES = {
-    "PROC-001": "customer is trying to turn on roaming before their trip and it won't activate",
-    "PROC-002": "customer is disputing the roaming charges on last month's bill from their trip to Spain",
-    "PROC-003": "customer says this month's bill is much higher than usual and they don't recognise some charges",
-    "PROC-004": "customer wants the premium SMS line item on their bill removed and refunded",
-    "PROC-005": "customer's service was cut off after a missed payment",
-    "PROC-006": "customer's phone says No SIM even though the SIM card is inserted",
-    "PROC-007": "customer lost their phone and needs a replacement SIM card",
-    "PROC-008": "customer's automatic monthly payment keeps getting declined",
-    "PROC-009": "customer sees a charge on their account they never made and thinks it's fraud",
-    "PROC-010": "prepaid customer's credit ran out much faster than expected",
-    "PROC-011": "customer wants to upgrade to a bigger data plan",
-    "PROC-012": "customer switched to a new plan last week and it still hasn't started",
-    "PROC-013": "customer wants to cancel their contract today",
-    "PROC-014": "customer is abroad and their phone shows no bars, emergency calls only",
-    "PROC-015": "customer's phone keeps crashing since the latest software update",
-    "PROC-016": "customer has no signal or mobile data at home, maybe an outage in their area",
-    "PROC-017": "customer is asking for a credit on their bill because of last week's outage",
-    "PROC-018": "customer is locked out of their online account after too many failed logins",
-    "PROC-019": "customer thinks someone else logged into their account and changed their email",
-    "PROC-020": "customer reset their password but the app still won't let them log in",
-}
-
-# Human labels for ticket conditions: does the customer's latest ticket answer the condition's
-# question? Only clear-cut tickets; ambiguous ones ("not sure if this was ever fully resolved") are
-# left out so the answer key never rests on a judgement call.
-#   COND-024: is the issue still happening?   COND-027: suspected unauthorised access?
-#   COND-028: specifically asking for a refund or billing credit?
-TICKET_LABELS: dict[str, dict[str, bool]] = {
-    "CUST-1002": {"COND-024": True, "COND-027": False, "COND-028": False},   # "roaming still isn't working"
-    "CUST-1005": {"COND-024": False, "COND-027": False, "COND-028": False},  # "device works fine now"
-    "CUST-1006": {"COND-024": True, "COND-027": False, "COND-028": False},   # "payment error keeps appearing"
-    "CUST-1032": {"COND-024": True, "COND-027": False, "COND-028": False},   # "replacement SIM still won't unlock"
-    "CUST-1035": {"COND-024": False, "COND-027": False, "COND-028": False},  # "just wanted to know their plan status"
-    "CUST-1044": {"COND-024": True, "COND-027": False, "COND-028": False},   # "still shows no signal"
-    "CUST-1053": {"COND-024": True, "COND-027": False, "COND-028": False},   # "declined again this morning"
-}
-
-EXIT_ORDER = ["first-yes", "later-yes", "fallback"]
-
-
-def candidates(procedure_id: str) -> list[dict]:
-    """Every customer's walk for this procedure, skipping tickets without a clear label."""
-    walks = []
-    for customer in load_json("crm_records.json"):
-        customer_id = customer["customer_id"]
-        try:
-            walk = expected_walk(procedure_id, customer_id, TICKET_LABELS.get(customer_id))
-        except ValueError:
-            continue  # a ticket the walk would read, with no clear label
-        walk["customer_id"] = customer_id
-        walk["tickets_read"] = [c for c in ticket_conditions_checked(procedure_id, walk["steps"]) if customer["recent_tickets"]]
-        walks.append(walk)
-    return walks
-
-
-def pick(procedure_id: str, wanted_exit: str) -> dict:
-    """One customer for this procedure: the wanted exit if possible, a ticket read if it's a ticket procedure."""
-    walks = candidates(procedure_id)
-    has_ticket_step = any(c["tickets_read"] for c in walks)
-    if has_ticket_step:
-        walks = [w for w in walks if w["tickets_read"]] or walks
-        # Prefer a ticket that answers YES when there is one, so the suite checks both answers.
-        says_yes = [w for w in walks if any(TICKET_LABELS[w["customer_id"]][c] for c in w["tickets_read"])]
-        if says_yes:
-            return says_yes[0]
-    for exit_kind in [wanted_exit] + [e for e in EXIT_ORDER if e != wanted_exit]:
-        matching = [w for w in walks if w["exit"] == exit_kind]
-        if matching:
-            return matching[0]
-    raise ValueError(f"no usable customer for {procedure_id}")
+# (procedure, customer, what the consultant types, ticket labels, the record facts the message rests on)
+WALKS = [
+    ("PROC-001", "CUST-1002", "customer called back, roaming still won't switch on and they fly out tomorrow",
+     {}, "roaming off; open ticket: roaming still not working after we enabled it"),
+    ("PROC-002", "CUST-1025", "customer is disputing the roaming charges from their trip to Italy on last month's bill, they already raised it once and were told to wait for this statement",
+     {}, "open billing-dispute ticket: agreed to wait for the next statement; balance $8.75"),
+    ("PROC-003", "CUST-1020", "customer says this month's bill is higher than usual and they can't work out why",
+     {}, "nothing explains it: balance $42.50, last payment succeeded, account active"),
+    ("PROC-004", "CUST-1035", "customer wants the $4.99 premium SMS charge on their latest bill refunded, they say it's a mistake",
+     {"COND-028": False}, "balance $75, credit card; latest ticket only asked about plan status, no refund request"),
+    ("PROC-005", "CUST-1010", "customer's service was suspended after their card payment failed, they want it back on today",
+     {}, "the only suspended account; card payment failed; open ticket disputing the suspension"),
+    ("PROC-006", "CUST-1022", "new customer just put the SIM in their Xiaomi 13 and the phone says No SIM",
+     {}, "1 month tenure, Xiaomi 13, SIM not activated"),
+    ("PROC-007", "CUST-1046", "customer lost their phone yesterday and needs a replacement SIM for their new one",
+     {}, "SIM still active (not blocked yet), account active"),
+    ("PROC-008", "CUST-1006", "customer's automatic monthly bank payment keeps failing with the same error",
+     {}, "bank transfer, last payment failed; open ticket: payment error keeps appearing"),
+    ("PROC-009", "CUST-1033", "customer sees a payment on their account they didn't make and thinks it's fraud",
+     {}, "no fraud-risk flag, last payment succeeded"),
+    ("PROC-010", "CUST-1027", "prepaid customer's credit is already down to zero, they think it ran out far too fast",
+     {}, "prepaid, balance $0"),
+    ("PROC-011", "CUST-1052", "customer has been with us almost six years and wants to move from Senior Saver to a plan with more data",
+     {}, "Senior Saver, 70 months tenure, plan active, last payment succeeded"),
+    ("PROC-012", "CUST-1028", "customer switched to Family Share 20GB last week and it still hasn't become active",
+     {}, "Family Share 20GB pending, payment pending"),
+    ("PROC-013", "CUST-1038", "customer wants to cancel their contract today, they're switching to another provider",
+     {}, "no device instalments owed, balance $42.50, 30 months tenure"),
+    ("PROC-014", "CUST-1060", "customer landed in Tokyo this morning and their OnePlus 12 shows no bars, emergency calls only",
+     {}, "OnePlus 12 supports roaming bands; roaming off"),
+    ("PROC-015", "CUST-1008", "customer's Motorola Edge keeps freezing and lost service since last night's software update",
+     {}, "Motorola Edge supports roaming bands; SIM not activated"),
+    ("PROC-016", "CUST-1017", "customer has had no signal or mobile data at home since this morning, there might be an outage in their area",
+     {}, "active outage at their zip code"),
+    ("PROC-017", "CUST-1044", "customer wants a credit on their bill for the days the outage in their area left them without service",
+     {"COND-024": True}, "active outage at their zip code; latest ticket: still no signal after the fix"),
+    ("PROC-018", "CUST-1040", "customer is locked out of their online account and can't log in anymore",
+     {}, "the only closed account; no tickets"),
+    ("PROC-019", "CUST-1053", "customer got an email saying their account email was changed, and they didn't do it",
+     {"COND-027": False}, "latest ticket is a routine card decline, not suspicious access; last payment failed"),
+    ("PROC-020", "CUST-1054", "customer reset their password yesterday but the app still won't let them log in",
+     {}, "no tickets, account active, SIM not activated"),
+]
 
 
 def build() -> list[dict]:
+    """Turn WALKS into golden examples, with the oracle filling in the expected action, rules, steps
+    and exit. Stops with an error if a procedure is missing, a customer is used twice, or a walk's
+    ticket labels don't match the tickets it actually reads."""
+    assert sorted(p for p, *_ in WALKS) == sorted(procedures()), "one walk per procedure"
+    assert len({c for _, c, *_ in WALKS}) == len(WALKS), "every walk uses a different customer"
     examples = []
-    for n, procedure_id in enumerate(sorted(procedures())):
-        walk = pick(procedure_id, EXIT_ORDER[n % len(EXIT_ORDER)])
-        labels = TICKET_LABELS.get(walk["customer_id"], {})
+    for procedure_id, customer_id, message, ticket_labels, fits in WALKS:
+        walk = expected_walk(procedure_id, customer_id, ticket_labels)
+        read = ticket_conditions_checked(procedure_id, walk["steps"]) if get_customer(customer_id)["recent_tickets"] else []
+        assert sorted(ticket_labels) == sorted(read), f"{procedure_id}: labels {sorted(ticket_labels)}, but the walk reads {read}"
         examples.append({
             "id": f"walk-{procedure_id}",
-            "inputs": {"message": MESSAGES[procedure_id], "customer_id": walk["customer_id"]},
+            "inputs": {"message": message, "customer_id": customer_id},
             "outputs": {
                 "path": "troubleshooting",
                 "procedure_id": procedure_id,
@@ -109,11 +88,7 @@ def build() -> list[dict]:
                 "steps": walk["steps"],
                 "exit": walk["exit"],
             },
-            "metadata": {
-                "suite": "walks",
-                "exit": walk["exit"],
-                "ticket_labels": {c: labels[c] for c in walk["tickets_read"]},
-            },
+            "metadata": {"suite": "walks", "exit": walk["exit"], "ticket_labels": ticket_labels, "fits": fits},
         })
     return examples
 
