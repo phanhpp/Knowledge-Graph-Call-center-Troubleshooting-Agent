@@ -1,57 +1,53 @@
 # Evaluation
 
-The agent is scored in two ways:
-
 |  | Online (`online/`) | Offline (`offline/`) |
 | --- | --- | --- |
-| What it scores | Real conversations, as they happen | Golden examples with known, reviewed answers |
-| When | Automatically, in LangSmith | Before a change ships: you run `run.py` |
-| How | Code checks + Jev judges, with no answer key | Each reply compared with its golden answer |
-| Result | Scores on each trace, alerts to Slack | A LangSmith experiment, a pass/fail gate |
+| Scores | real conversations, live | golden examples with known answers |
+| When | automatically, in LangSmith | before a change ships: you run `run.py` |
+| How | code checks + Jev judges, no answer key | each reply compared with its right answer |
+| Result | scores on traces, alerts to Slack | a LangSmith experiment + a pass/fail gate |
 
 ## Layout
 
 ```
 eval/
 ├── online/
-│   ├── citations_exist.py                    online code checks: paste each file into LangSmith
+│   ├── citations_exist.py                    online code checks: paste each into LangSmith
 │   ├── walk_has_checklist.py
 │   ├── troubleshooting_customer_handled.py
 │   └── utils/
 │       ├── dry_run.py                        try the checks on real traces, locally
-│       └── build_valid_ids.py                refresh citations_exist.py's ID list after data/ changes
+│       └── build_valid_ids.py                refresh citations_exist.py's IDs after data/ changes
 └── offline/
-    ├── datasets/*.jsonl                      golden examples, one file per suite (reviewed, in git)
-    ├── build_walks.py                        writes walks.jsonl
-    ├── build_routing.py                      writes routing.jsonl
-    ├── oracle.py                             works out a walk's correct answer from data/
+    ├── datasets/*.jsonl                      golden examples, one file per suite
+    ├── build_walks.py, build_routing.py      write those files
+    ├── oracle.py                             works out a walk's right answer from data/
     ├── target.py                             runs one example through the real agent
-    ├── evaluators/code.py                    exact checks against the golden answer
+    ├── evaluators/code.py                    the checks for each suite
     ├── run.py                                runs a suite as a LangSmith experiment
     └── thresholds.yaml                       minimum passes per check, for --gate
 ```
 
 ## Online
 
-- **Code checks (3):** in LangSmith, open the `kg` project → Rules → add an online code evaluator and paste the file. Filter: Is Trace = true, not errored.
-- **Jev judges (7):** set up in the LangSmith UI as decision-model evaluators, so there are no files for them.
-- **Alerts:** LangSmith alerts post to Slack. A private channel must invite the LangSmith app first.
-- What each check and judge scores: the main README's Evaluation section.
+- **Code checks (3):** LangSmith → `kg` project → Rules → add a code evaluator, paste the file. Filter: Is Trace = true, not errored.
+- **Jev judges (7):** set up in the LangSmith UI, so no files here.
+- **Alerts:** posted to Slack. A private channel must invite the LangSmith app.
 
 ```bash
-uv run python eval/online/utils/dry_run.py          # what each code check would score on recent traces
+uv run python eval/online/utils/dry_run.py          # what each check would score on recent traces
 uv run python eval/online/utils/build_valid_ids.py  # after changing data/, then paste citations_exist.py again
 ```
 
 ## Offline
 
 ```bash
-uv run python -m eval.offline.run --suite walks --tag baseline   # one suite, experiment "walks-baseline-…"
-uv run python -m eval.offline.run --suite all --gate             # exits 1 if a check is below thresholds.yaml
-uv run pytest tests/eval                                         # no keys: oracle, answer key, checks, gate
+uv run python -m eval.offline.run --suite walks --tag baseline   # one suite → experiment "walks-baseline-…"
+uv run python -m eval.offline.run --suite all --gate             # every suite; exit 1 if below thresholds.yaml
+uv run pytest tests/eval                                         # no keys needed
 ```
 
-`run.py` needs what the agent needs (Neo4j with the graph and articles loaded, and the model keys) and makes real model calls.
+Needs Neo4j (graph and articles loaded) and the model keys, like the agent. Makes real model calls.
 
 ### How a suite is chosen
 
@@ -85,9 +81,10 @@ uv run pytest tests/eval                                         # no keys: orac
                      LangSmith experiment + table ──► gate pass / fail
 ```
 
-`run.py` is the only file that knows the suite name; the others are looked up by it. `target.py` just runs the graph and returns everything (reply text, citations, intent, procedure, …); each suite's checks read only what they need. `--suite all` runs every suite that has a `datasets/<name>.jsonl`. Adding a suite means a new JSONL file, a `SUITES` entry and a `thresholds.yaml` section.
+- Only `run.py` knows the suite name. `target.py` just runs the graph.
+- A new suite = a JSONL file + a `SUITES` entry + a `thresholds.yaml` section.
 
-### How a run works (the walks suite)
+### How a run works (walks example)
 
 ```
  walks.jsonl  (20 golden examples, in git)
@@ -115,34 +112,13 @@ uv run pytest tests/eval                                         # no keys: orac
  LangSmith experiment  +  a table in the terminal  +  gate (pass/fail)
 ```
 
-- **Results:** the table (pass counts, each failing example with where it went instead, a pass count per slice, latency) is also saved to `results/<suite>-<tag>.json`, which isn't in git.
-- **Gate:** `--gate` fails if a check is below its threshold in `thresholds.yaml`.
-- **Crashes:** a run that crashed (e.g. Jev returning 529 Overloaded) is listed as errored, not counted as a wrong answer, and the gate asks you to rerun.
-- **Comparing versions:** open both experiments in LangSmith (Datasets & Experiments → the dataset → Compare).
+**The table shows** pass counts, each miss ("expected … got …"), passes per slice, and latency. It's also saved to `results/<suite>-<tag>.json` (not in git).
 
-### When Jev fails
+**To compare two versions:** LangSmith → Datasets & Experiments → the dataset → Compare.
 
-TypeSafe's API (Jev) is in early access, and it wasn't always stable: in one run 7 of 20 messages got **529 Overloaded** (its servers busy for everyone, not our volume), and in a 72-run repeat 2 runs failed while **connecting**: once the server hung up mid-handshake, once the handshake got no reply. Both happened before Jev saw the question.
+### Walks suite (20)
 
-So the agent retries every Jev call up to 3 times (about 0.5 s, then 1 s apart) on the errors that pass by themselves, with a 10 s timeout per try (the package's default is 30 s). The error classes come from the `langchain-typesafe` package; `_JEV_RETRY_ON` in `agent/supervisor.py` picks which ones to retry.
-
-| Error (`langchain_typesafe.client`) | When | Retried? |
-| --- | --- | --- |
-| `TypeSafeInternalServerError` | any 5xx, including 529 Overloaded | ✅ |
-| `TypeSafeRateLimitError` | 429, too many requests from us | ✅ |
-| `TypeSafeAPIConnectionError` | no answer at all, e.g. the connection dropped | ✅ |
-| `TypeSafeAPITimeoutError` | no answer within 10 s | ✅ |
-| `TypeSafeAuthenticationError` | 401, wrong key | ❌ fails at once |
-| `TypeSafeBadRequestError`, `TypeSafeUnprocessableEntityError` | 400, 422: a malformed request | ❌ |
-| `TypeSafePermissionDeniedError`, `TypeSafeNotFoundError` | 403, 404 | ❌ |
-
-The ❌ errors would fail the same way every time, so retrying them would only add waiting. A run that still fails after 3 tries is listed as errored in the eval, and the gate asks for a rerun.
-
-### Walks suite (20 examples)
-
-One troubleshooting walk per procedure. Each walk has a consultant message and a customer, chosen so the message fits that customer's CRM record. The 20 customers are all different, and the walks end in all three ways: step 1 finds the cause, a later step does, or every step says NO.
-
-**The 6 checks:**
+One walk per procedure. Each message fits its customer's CRM record, and all 20 customers are different.
 
 | Check | Question |
 | --- | --- |
@@ -153,7 +129,7 @@ One troubleshooting walk per procedure. Each walk has a consultant message and a
 | `steps_correct` | Did it check the right steps, in order, with the right yes/no? |
 | `has_checklist` | Does the reply show "Why:" and the steps it checked? |
 
-**Where the right answers come from:** `oracle.py` works out the right answers, and `build_walks.py` writes them into `walks.jsonl`. When an eval runs, the oracle isn't used: the agent's reply is compared with the answers already saved in the file.
+**The right answers come from `oracle.py`:**
 
 ```
  building the suite (only when the walks change)
@@ -168,36 +144,55 @@ One troubleshooting walk per procedure. Each walk has a consultant message and a
                                              no → data/ changed → rebuild the suite
 ```
 
-**Why an oracle:**
+Why an oracle:
 
-- **By hand is slow and error-prone:** 20 walks, up to 4 steps each, and each step means looking up the CRM record (some lookups take two hops, e.g. postcode → outage list).
-- **Copying the agent's replies isn't an answer key:** any bug would be saved as the right answer, and the test would always pass.
-- **The oracle follows `procedures.json` itself:** it's separate code, so it won't share the agent's mistakes, and it lets CI catch answers that went stale after `data/` changed.
+- By hand: slow and easy to get wrong (20 walks, up to 4 steps, CRM lookups each).
+- Copying the agent's replies: its bugs would become the "right" answers.
+- The oracle is separate code, so it won't share the agent's mistakes, and CI can re-check it.
 
-For the 3 procedures that read a ticket, the oracle can't judge the ticket's text, so a human label gives that step's answer.
+Ticket steps can't be computed, so they use a human label.
 
-**To change a walk:** edit `WALKS` in `build_walks.py`, run `uv run python -m eval.offline.build_walks`, and review the diff of `walks.jsonl`.
+**To change a walk:** edit `WALKS` in `build_walks.py`, then run `uv run python -m eval.offline.build_walks`.
 
-### Routing suite (24 examples)
+### Routing suite (24)
 
-Does each message go to the right place? Routing is two Jev decisions: the path (troubleshooting, general question or explain), then, for troubleshooting, the procedure (or none, and the knowledge base answers). The checks are `path_correct` and `procedure_correct`, exact matches, so Jev never grades its own routing.
+Does each message reach the right path and procedure? Checks: `path_correct`, `procedure_correct`.
 
-There's no oracle here: each answer comes from the procedures' `when_to_use` text, and `build_routing.py` checks every example against the data (the procedure and customer exist, each pair covers two procedures, no repeats).
-
-| Slice | Examples | What it tests |
+| Slice | # | Example |
 | --- | --- | --- |
-| `procedure-pair` | 14 | 7 pairs of easily confused procedures, one message each, e.g. can't switch roaming on (PROC-001) vs no signal abroad (PROC-014) |
-| `policy-twin` | 4 | the same topics as general questions ("how much does a replacement SIM cost?"): the knowledge base must answer |
-| `general-with-customer` | 1 | a general question that still names a customer |
-| `near-miss` | 1 | a message that went to the wrong procedure before |
-| `typo` | 2 | misspelt messages, typed in a hurry |
-| `no-procedure` | 1 | a real problem no procedure covers |
-| `off-topic` | 1 | nothing to do with the job |
+| `procedure-pair` | 14 | "can't switch roaming on" (PROC-001) vs "abroad, no bars" (PROC-014) |
+| `policy-twin` | 4 | "how much does a replacement SIM cost?" → knowledge base |
+| `general-with-customer` | 1 | a general question that names a customer → knowledge base |
+| `near-miss` | 1 | "can't log in … hasn't tried resetting the password" → PROC-018 |
+| `typo` | 2 | "customers auto paymnt keeps gettin declined" → PROC-008 |
+| `no-procedure` | 1 | "voicemail stopped working" → knowledge base |
+| `off-topic` | 1 | "help me write an email to my team lead" → knowledge base |
 
-**Baseline:** path 24/24, procedure 24/24, the same in 3 repeated runs. The first baseline was 23/24: "…hasn't tried resetting the password" went to PROC-020 (login fails *after* a reset) instead of PROC-018 (locked out). Rewording the two procedures' `when_to_use` to make "has a reset actually been done?" the deciding fact fixed it.
+**Baseline:** 24/24 on both checks, the same in 3 repeated runs. The near-miss used to go to PROC-020, which was fixed by rewording the two procedures' `when_to_use`.
 
-**To change an example:** edit `ROUTES` in `build_routing.py` and run `uv run python -m eval.offline.build_routing`.
+**To change an example:** edit `ROUTES` in `build_routing.py`, then run `uv run python -m eval.offline.build_routing`.
 
 ### Coming next
 
-Knowledge base (15, scored by Jev judges), conversations (6), guards (4) and adversarial (6).
+Knowledge base (15, with Jev judges), conversations (6), guards (4), adversarial (6).
+
+## When Jev fails
+
+TypeSafe's API is in early access and sometimes unstable. We saw:
+
+- **529 Overloaded** on 7 of 20 messages in one run, because its servers were busy for everyone;
+- **connection failures** in 2 of 72 runs, where the handshake was dropped or never answered, before Jev saw the question.
+
+So the agent (`_JEV_RETRY_ON` in `agent/supervisor.py`) tries each Jev call up to **3 times**, about 0.5 s then 1 s apart, with a **10 s timeout** per try. The error classes come from the `langchain-typesafe` package.
+
+| Error (`langchain_typesafe.client`) | When | Retried? |
+| --- | --- | --- |
+| `TypeSafeInternalServerError` | 5xx, incl. 529 Overloaded | ✅ |
+| `TypeSafeRateLimitError` | 429, too many requests | ✅ |
+| `TypeSafeAPIConnectionError` | no answer, e.g. connection dropped | ✅ |
+| `TypeSafeAPITimeoutError` | no answer within 10 s | ✅ |
+| `TypeSafeAuthenticationError` | 401, wrong key | ❌ |
+| `TypeSafeBadRequestError`, `TypeSafeUnprocessableEntityError` | 400, 422, bad request | ❌ |
+| `TypeSafePermissionDeniedError`, `TypeSafeNotFoundError` | 403, 404 | ❌ |
+
+❌ means it would fail the same way every time, so it fails at once. If a run still fails after 3 tries, the eval lists it as **errored**, not wrong, and the gate asks for a rerun.
