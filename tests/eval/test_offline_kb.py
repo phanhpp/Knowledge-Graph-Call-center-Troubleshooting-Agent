@@ -8,7 +8,7 @@ from pathlib import Path
 
 from langchain_typesafe import ClassifierResponse, NoulAnswer, ScoreAnswer
 
-from eval.offline.build_kb import build
+from eval.offline.build.kb import build
 from eval.offline.evaluators.code import mrr, recall_at_5
 from eval.offline.evaluators.jev import kb_answer, kb_questions
 from eval.offline.run import gate
@@ -27,9 +27,9 @@ def example(golden_id: str) -> dict:
 # --- the saved questions ---
 
 
-def test_kb_file_is_what_build_kb_makes():
+def test_kb_file_is_what_its_build_script_makes():
     """build() also checks the questions (articles exist, all 9 categories covered, no repeats). If
-    this fails, kb.jsonl was edited by hand or not rebuilt: run build_kb."""
+    this fails, kb.jsonl was edited by hand or not rebuilt: run `uv run python -m eval.offline.build.kb`."""
     assert questions() == build()
 
 

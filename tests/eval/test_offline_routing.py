@@ -1,11 +1,11 @@
 """Tests for the offline evaluation's routing suite that need no keys and no model calls: the saved
-examples are still what build_routing makes, and they're well formed. The real end-to-end run,
+examples are still what build/routing.py makes, and they're well formed. The real end-to-end run,
 with model calls, is `uv run python -m eval.offline.run --suite routing`."""
 
 import json
 from pathlib import Path
 
-from eval.offline.build_routing import build
+from eval.offline.build.routing import build
 from eval.offline.run import went
 
 ROUTING = Path(__file__).resolve().parents[2] / "eval" / "offline" / "datasets" / "routing.jsonl"
@@ -15,9 +15,9 @@ def routes() -> list[dict]:
     return [json.loads(line) for line in ROUTING.read_text().splitlines() if line.strip()]
 
 
-def test_routing_file_is_what_build_routing_makes():
+def test_routing_file_is_what_its_build_script_makes():
     """build() also checks the examples (procedures and customers exist, pairs cover two procedures,
-    no repeats). If this fails, routing.jsonl was edited by hand or not rebuilt: run build_routing."""
+    no repeats). If this fails, routing.jsonl was edited by hand or not rebuilt: run `uv run python -m eval.offline.build.routing`."""
     assert routes() == build()
 
 

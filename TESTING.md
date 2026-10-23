@@ -4,7 +4,7 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 
 | Layer | Tool | Where | Tests | Needs |
 |---|---|---|---|---|
-| Agent, data, Slack bot | pytest | `tests/` | 273 (242 fast + 31 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
+| Agent, data, Slack bot | pytest | `tests/` | 286 (255 fast + 31 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
 | Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
@@ -45,8 +45,9 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 | `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
 | `test_config.py` | 3 | the Neo4j check: a down Neo4j gives a reason and is recorded as an **errored traced step**, so alerts see it |
 | `eval/test_offline_walks.py` | 14 | the offline walks suite without keys: the oracle's answers, the saved answer key still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
+| `eval/test_offline_behaviour.py` | 13 | the offline guards, conversations and adversarial suites without keys: the saved examples still match their build scripts, the guard checks (fixed replies, call limits, checks that don't apply), the per-turn conversation checks, the conversation and adversarial judges with a fake Jev (the transcript labelled like the agent's, the questions asked) |
 | `eval/test_offline_kb.py` | 12 | the offline knowledge-base suite without keys: the saved questions, recall@5 and MRR from the citations, the Jev judge with a fake Jev (the questions asked, probabilities turned into scores, a failed judge marked as an error), the gate's mean thresholds |
-| `eval/test_offline_routing.py` | 4 | the offline routing suite without keys: the saved examples still match `build_routing`, every procedure pair has one message per side, general questions expect no procedure, a miss shows where the message went |
+| `eval/test_offline_routing.py` | 4 | the offline routing suite without keys: the saved examples still match `build/routing.py`, every procedure pair has one message per side, general questions expect no procedure, a miss shows where the message went |
 | `eval/test_online_code_evaluators.py` | 17 | the online code evaluators, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
 | `slack_bot/` (8 files) | 76 | message parsing, Slack formatting, access control (members channel, fails closed), conversation threads, saved DM conversations, the `/agent` and DM handlers, Bolt wiring. All with fake Slack events: no network |
 | `e2e/troubleshooting/` | 6 | the full graph with real models: field, chain and ticket conditions |
@@ -100,7 +101,7 @@ Two GitHub Actions workflows, both without secrets.
 | Job | Runs |
 |---|---|
 | `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
-| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 236 pass, 6 skip because they need API keys |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 249 pass, 6 skip because they need API keys |
 
 **`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
 

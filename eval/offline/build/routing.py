@@ -1,6 +1,6 @@
 """Builds the routing suite (datasets/routing.jsonl): does each message go to the right place?
 
-    uv run python -m eval.offline.build_routing
+    uv run python -m eval.offline.build.routing
 
 Routing is two Jev decisions (agent/supervisor.py):
   1. classify_intent picks the path: troubleshooting (a customer's case), open_ended (a general
@@ -33,7 +33,7 @@ from pathlib import Path
 from eval.offline.oracle import procedures
 from mock_crm.crm_store import get_customer
 
-OUT = Path(__file__).resolve().parent / "datasets" / "routing.jsonl"
+OUT = Path(__file__).resolve().parents[1] / "datasets" / "routing.jsonl"
 
 TROUBLESHOOTING, GENERAL = "troubleshooting", "open_ended"
 

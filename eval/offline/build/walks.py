@@ -1,6 +1,6 @@
 """Builds the walks suite (datasets/walks.jsonl): one troubleshooting example per procedure.
 
-    uv run python -m eval.offline.build_walks
+    uv run python -m eval.offline.build.walks
 
 Each walk below is a hand-checked (procedure, customer, message) triple. The customer is chosen so:
   - the message fits their CRM record ("prepaid" goes to a prepaid customer, "service was suspended"
@@ -19,7 +19,7 @@ from pathlib import Path
 from eval.offline.oracle import expected_walk, procedures, ticket_conditions_checked
 from mock_crm.crm_store import get_customer
 
-OUT = Path(__file__).resolve().parent / "datasets" / "walks.jsonl"
+OUT = Path(__file__).resolve().parents[1] / "datasets" / "walks.jsonl"
 
 # (procedure, customer, what the consultant types, ticket labels, the record facts the message rests on)
 WALKS = [

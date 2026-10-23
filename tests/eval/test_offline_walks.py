@@ -73,7 +73,7 @@ def test_walks_use_a_different_customer_each():
 
 def test_walks_answer_key_still_matches_the_data():
     """The saved answers still match what the oracle says today. If this fails, data/ changed:
-    rebuild with build_walks and review the changed walks again."""
+    rebuild with `uv run python -m eval.offline.build.walks` and review the changed walks again."""
     for example in walks():
         expected = expected_walk(example["outputs"]["procedure_id"], example["inputs"]["customer_id"], example["metadata"]["ticket_labels"])
         for key in ("action_id", "rule_ids", "steps", "exit"):

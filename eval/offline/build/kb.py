@@ -1,6 +1,6 @@
 """Builds the knowledge-base suite (datasets/kb.jsonl): general questions the articles answer, or don't.
 
-    uv run python -m eval.offline.build_kb
+    uv run python -m eval.offline.build.kb
 
 Each question is something a consultant asks on a call, answered from the knowledge-base articles
 (the agent's open_ended path). For each one:
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from etl.io_utils import load_json
 
-OUT = Path(__file__).resolve().parent / "datasets" / "kb.jsonl"
+OUT = Path(__file__).resolve().parents[1] / "datasets" / "kb.jsonl"
 
 # (id, question, the article holding the answer, key facts, reference answer)
 ANSWERABLE = [
