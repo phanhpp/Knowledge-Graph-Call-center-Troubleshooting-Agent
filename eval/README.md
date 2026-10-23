@@ -230,6 +230,8 @@ What the misses mean:
 - **Facts 0.94, not 1:** in 4 of 36 answers, Jev said a key fact was missing. Reading them, it really was, e.g. a suspension answer never said bank transfers take 1–3 days. So Claude left a detail out; the judge was right.
 - **2 close calls:** for 2 of those facts, Jev's "stated" probability was 0.39 and 0.45. It was right, but unsure. Step 5 (calibration) checks whether 0.5 is the right line.
 
+**To change a question:** edit `ANSWERABLE` / `UNANSWERABLE` in `build_kb.py`, then run `uv run python -m eval.offline.build_kb`.
+
 ### How Jev performed as a judge
 
 `tests/e2e/judges/` tests **the judge, not the agent**: it gives Jev answers whose verdict we already know, and checks that Jev scores them right. Run it after changing a judge's wording.
@@ -242,8 +244,6 @@ What the misses mean:
 | made up for an unanswerable question ("the fee is $25") | admits the gap 0.01, unsupported 0.98–0.99 | ✅ caught |
 
 What this means: Jev clearly tells good answers from bad ones, with no borderline scores on these cases, and it doesn't confuse "vague" with "wrong". So a high knowledge-base score reflects the answers, not a judge that says yes to everything.
-
-**To change a question:** edit `ANSWERABLE` / `UNANSWERABLE` in `build_kb.py`, then run `uv run python -m eval.offline.build_kb`.
 
 ### Coming next
 
