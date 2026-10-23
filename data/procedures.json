@@ -82,7 +82,7 @@
     {"step_id": 1, "description": "Check if the customer's most recent ticket description indicates the outage issue is still ongoing", "condition_id": "COND-024", "action_if_true_id": "ACT-006", "next_step": 2},
     {"step_id": 2, "description": "Check if outstanding balance exceeds $50", "condition_id": "COND-016", "action_if_true_id": "ACT-011", "next_step": null, "action_if_false_id": "ACT-024"}
   ]},
-  {"procedure_id": "PROC-018", "procedure_name": "Customer locked out of online account", "category": "account_access", "when_to_use": "The customer cannot log in to their online account or app: locked out, forgotten password, or locked after failed attempts. If they already reset the password and the app still fails, use PROC-020; if they think someone else got into the account, use PROC-019.", "steps": [
+  {"procedure_id": "PROC-018", "procedure_name": "Customer locked out of online account", "category": "account_access", "when_to_use": "The customer cannot log in to their online account or app and has not reset their password: locked out, forgotten password, locked after failed attempts, or no reset tried yet. If a password reset has already been completed and the app still fails, use PROC-020; if they think someone else got into the account, use PROC-019.", "steps": [
     {"step_id": 1, "description": "Verify customer identity before any account changes", "condition_id": "COND-020", "action_if_true_id": "ACT-007", "next_step": 2},
     {"step_id": 2, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": 3},
     {"step_id": 3, "description": "Check if account is closed", "condition_id": "COND-015", "action_if_true_id": "ACT-022", "next_step": null, "action_if_false_id": "ACT-017"}
@@ -91,7 +91,7 @@
     {"step_id": 1, "description": "Check if the customer's ticket description suggests unauthorized or suspicious activity", "condition_id": "COND-027", "action_if_true_id": "ACT-007", "next_step": 2},
     {"step_id": 2, "description": "Check if last payment attempt failed (possible fraud indicator)", "condition_id": "COND-008", "action_if_true_id": "ACT-021", "next_step": null, "action_if_false_id": "ACT-017"}
   ]},
-  {"procedure_id": "PROC-020", "procedure_name": "Login app repeatedly fails after password reset", "category": "account_access", "when_to_use": "The customer already reset their password but logging in to the app still fails repeatedly. If they cannot log in and have not reset the password, use PROC-018.", "steps": [
+  {"procedure_id": "PROC-020", "procedure_name": "Login app repeatedly fails after password reset", "category": "account_access", "when_to_use": "A password reset has already been completed, and logging in to the app still fails after it. Only when the reset was actually done: if the customer has not tried a reset yet, use PROC-018.", "steps": [
     {"step_id": 1, "description": "Direct customer to clear cached app data and retry login", "condition_id": "COND-020", "action_if_true_id": "ACT-008", "next_step": 2},
     {"step_id": 2, "description": "Check if account is suspended", "condition_id": "COND-014", "action_if_true_id": "ACT-023", "next_step": 3},
     {"step_id": 3, "description": "Check if SIM status is active (rule out device-side 2FA delivery issue)", "condition_id": "COND-013", "action_if_true_id": "ACT-008", "next_step": null, "action_if_false_id": "ACT-017"}

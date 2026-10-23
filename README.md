@@ -17,7 +17,7 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 - **Hybrid GraphRAG.** Neo4j-native vector and full-text search over the knowledge base, then graph grounding (`Article → CITES_RULE → Rule`) to attach the governing rules.
 - **Typed routing with a cautious fallback.** TypeSafe's Jev decision model returns probabilities, not prose, so routing is plain thresholds: an uncertain message goes to the knowledge base instead of a wrong procedure.
 - **Online evaluation on every real conversation.** LangSmith code checks and Jev judges (made-up facts, contradictions, usefulness, retrieval relevance vs knowledge gaps), alerts to Slack, and consultant 👍 👎 on each answer.
-- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 231 pytest (25 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
+- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 286 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
 
 ## Architecture
 
@@ -319,7 +319,7 @@ Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). E
 
 ## Evaluation
 
-LangSmith scores every real conversation automatically. Setup: `eval/eval_plan.md`.
+LangSmith scores every real conversation automatically.
 
 ### Code checks: rules that must always hold
 
@@ -423,7 +423,7 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 
 | Suite | What it covers | Count |
 |---|---|---|
-| **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators | 231 tests; 25 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
+| **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites | 286 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
 | **Vitest** (`web/`) | the password gate, message formats, panel sizes, the feedback and full-source hooks | 40 |
 | **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding | 23 |
 | **GitHub Actions** | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | — |
