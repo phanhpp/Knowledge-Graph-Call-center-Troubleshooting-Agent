@@ -5,7 +5,7 @@ An example is one message ({"message", "customer_id"}) or a conversation
 see each other; the turns of one conversation do see the earlier turns, as in Slack or the web app.
 
 For each turn it returns what the evaluators look at:
-  - the reply: text, citations, sources;
+  - the reply: text, citations, sources, and for an explanation the files it read (looked_up);
   - where the turn ended up: intent (the path), matched procedure, current customer, error;
   - claude_calls, jev_calls: how many model calls the turn made, counted by a callback (see
     _ModelCalls for what it can and can't see).
@@ -80,6 +80,7 @@ def _turn(thread_id: str, text: str, customer_id: str | None) -> dict:
         "text": str(reply.content),
         "citations": list(kwargs.get("citations", [])),
         "sources": list(kwargs.get("sources", [])),
+        "looked_up": list(kwargs.get("looked_up", [])),
         "intent": state.get("intent"),
         "matched_procedure_id": state.get("matched_procedure_id"),
         "customer_id": state.get("customer_id"),

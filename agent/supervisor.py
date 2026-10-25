@@ -37,7 +37,7 @@ is the current customer: the last one named. Without a checkpointer every call s
 
 Jev (TypeSafe, a classifier: typed answers with probabilities, no generated text) is called in
 classify_intent and match_procedure; it needs TYPESAFE_API_KEY. Claude is called in three places:
-explain_answer, agent/ticket_interpreter.py (inside the walk, only for ticket_text conditions) and
+explain_answer (a small agent with read-only look-up tools, agent/explain_tools.py), agent/ticket_interpreter.py (inside the walk, only for ticket_text conditions) and
 agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 """
 
@@ -46,8 +46,10 @@ import re
 from functools import lru_cache
 from typing import Literal, Optional
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import Runnable
 from langchain_typesafe import Choice, TypeSafeClassifier
 from langchain_typesafe.client import (
@@ -59,11 +61,12 @@ from langchain_typesafe.client import (
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+from agent import explain_tools
 from agent.graph_rag_chain import graph_rag_chain
 from agent.procedural_executor import build_procedural_executor_graph, procedure_name
 from agent.state import SuperAgentState
 from agent.utils import reply
-from config import get_driver, neo4j_unavailable_reason
+from config import neo4j_unavailable_reason
 from etl.io_utils import load_json
 from mock_crm.crm_store import CustomerNotFoundError, get_customer
 
@@ -73,14 +76,7 @@ _EXPLAIN_MODEL = "claude-sonnet-5"
 
 NOTHING_TO_EXPLAIN = "There is nothing earlier in this conversation to explain yet. Ask your question first."
 
-_EXPLAIN_HISTORY = 10  # how many recent messages (all customers) explain_answer gives Claude
-
-_RULES_CYPHER = """
-MATCH (r:Rule) WHERE r.ruleId IN $ids
-RETURN r.ruleId AS id, r.description AS description, r.detail AS detail
-ORDER BY id
-"""
-
+_EXPLAIN_HISTORY = 10  # how many recent messages (all customers) explain_answer's agent gets
 
 # Thresholds for Jev's answers. Starting values: tune them on a labelled set of messages. Kept
 # cautious on purpose, since walking the wrong procedure does more harm than a KB answer.
@@ -355,8 +351,8 @@ def _without_label(text: str) -> str:
     return _LABEL.sub("", text)
 
 
-def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
-    """The last `limit` messages, those about a customer labelled with it, for explain_answer's prompt.
+def _explain_history(messages: list, limit: int) -> list:
+    """The last `limit` messages, those about a customer labelled with it, for explain_answer's agent.
 
     A consultant message stamped with a customer becomes "[CUST-1001] <text>", and the reply to it
     "[reply about CUST-1001] <text>". A message with no customer ID, and its reply, get no label: it
@@ -365,13 +361,11 @@ def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
     first, so none appears twice. A reply's citations are added as "Sources: ..." (Claude does not
     see `additional_kwargs`). The window starts on a consultant message, which Claude requires. The
     saved messages are not changed.
-
-    Returns (the labelled messages, every ID the replies in the window cite).
     """
     window = messages[-limit:]
     while window and window[0].type != "human":
         window = window[1:]
-    labelled, cited = [], []
+    labelled = []
     customer = None
     for message in window:
         text = _without_label(message.content)
@@ -383,40 +377,40 @@ def _explain_history(messages: list, limit: int) -> tuple[list, list[str]]:
             sources = f"\n\nSources: {', '.join(citations)}" if citations else ""
             label = f"[reply about {customer}] " if customer else ""
             labelled.append(AIMessage(f"{label}{text}{sources}"))
-            cited += [c for c in citations if c not in cited]
-    return labelled, cited
+    return labelled
 
 
-def _rule_wording(ids: list[str]) -> str:
-    """The wording of every rule among `ids` (the IDs cited in the conversation), from Neo4j.
+_EXPLAIN_TOOL_CALLS = 4  # look-ups per explanation; past this, Claude answers with what it has
 
-    Replies carry rule IDs only (e.g. "Sources: ACT-015, R012"), so "what does that rule say?"
-    needs the text looked up. Non-rule IDs (actions, articles) simply match nothing.
-    """
-    if not ids:
-        return ""
-    with get_driver().session() as session:
-        rows = session.run(_RULES_CYPHER, ids=ids).data()
-    return "\n".join(f"- {r['id']}: {r['description']}. {r['detail']}" for r in rows)
+
+def _explain_model() -> ChatAnthropic:
+    """Claude for the explain agent. "nostream": LangGraph leaves its tokens out of the message stream;
+    the reply a client shows is the one explain_answer returns via reply() (with its run id). Without
+    the tag the web app showed an explanation twice."""
+    return ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"}, tags=["nostream"])
 
 
 def explain_answer(state: SuperAgentState) -> dict:
-    """Answer a follow-up about an earlier answer ("why?", "what does R012 say?"), from the
-    conversation itself.
+    """Answer a follow-up about an earlier answer ("why?", "what does R012 say?", "why did you cite
+    KB-006?"), with a small agent that can look things up.
 
     Claude gets the last _EXPLAIN_HISTORY messages, those about a customer labelled with its ID (see
     _explain_history), so it can follow a conversation that moves between customers and general
-    questions. A label Claude copies into its reply is removed before the reply is saved. A troubleshooting reply already holds everything a "why?" needs: the
-    action, why the walk stopped, and every step checked with its value. The only thing added is the
-    wording of the rules those messages cite, from Neo4j.
+    questions. A troubleshooting reply already holds what a "why?" needs: the action, why the walk
+    stopped, and every step checked with its value. Replies name procedures, rules and articles by
+    ID only, so Claude can read them with read-only tools over a virtual folder of them
+    (agent/explain_tools.py: ls, read_file, grep), at most _EXPLAIN_TOOL_CALLS times. An agent, not
+    plain code, because what to read depends on the question: "why did you cite KB-006?" needs that
+    one article, "what does that rule say?" the rule, "why didn't it check for a credit?" the
+    procedure, and "why?" after a walk usually nothing.
 
-    If the question names a customer, Claude answers only about that customer's messages. If it
-    names none, Claude answers about the earlier answer it refers to, usually the latest one: no
-    customer is forced on it. Either way it is told never to claim an earlier answer was wrong.
-    With no earlier message it returns NOTHING_TO_EXPLAIN without calling Claude.
+    If the question names a customer, Claude answers only about that customer's messages; if it
+    names none, about the earlier answer it refers to, usually the latest one. It is told never to
+    claim an earlier answer was wrong. A label Claude copies into its reply is removed. With no
+    earlier message it returns NOTHING_TO_EXPLAIN without calling Claude.
 
-    The reply cites nothing: an explanation is not a new source, and the answer it explains
-    already showed its sources.
+    The reply cites nothing (an explanation is not a new source); `looked_up` lists the files Claude
+    read, so a judge can see what the explanation was based on.
     """
     if len(state["messages"]) < 2:
         return reply(NOTHING_TO_EXPLAIN)
@@ -433,30 +427,33 @@ def explain_answer(state: SuperAgentState) -> dict:
             "the most recent one."
         )
 
-    # label messages (and their replies) with the customer ID if they have one, otherwise no label; only last 10 messages
-    history, cited = _explain_history(state["messages"], _EXPLAIN_HISTORY)
-    # for rules cited in AI respones, fetch the full definition from neo4j
-    rules = _rule_wording(cited)
-
-    system = SystemMessage(
+    system = (
         "You are helping a call-centre consultant. They are asking a follow-up question about an "
-        "earlier answer. The conversation below can cover several customers and general questions: "
+        "earlier answer. The conversation can cover several customers and general questions: "
         "a message about a customer starts with its customer ID, and the reply to it with "
         "'[reply about <customer ID>]'; other messages have no label. The labels are only for "
         "reading the conversation; never start your reply with one. "
-        f"{focus} Answer from the conversation and the rule wording below ONLY; if they do not "
-        "contain the answer, say so plainly, and never guess or claim an earlier answer was wrong. "
-        "Be brief. A rule is a business policy governing an action, listed below; a step's "
-        "condition is a check, not a rule. If no rule governs the action, say so plainly; never call "
-        "anything else a rule.\n\n"
-        f"Rules cited in the conversation:\n{rules or '(none)'}"
+        f"{focus} Answer from the conversation and the files you read ONLY; if they do not contain "
+        "the answer, say so plainly, and never guess or claim an earlier answer was wrong. Be brief. "
+        "Tools: ls(folder) lists procedures/, rules/ or articles/; read_file(path) reads one, e.g. "
+        "procedures/PROC-007.md; grep(pattern) finds matching sentences. Read only what the question "
+        "needs. A rule is a business policy governing an "
+        "action; a step's condition is a check, not a rule. If no rule governs the action, say so "
+        "plainly; never call anything else a rule. "
+        # Claude called the off-topic cited articles "an error on my part"; citing all 5 is on purpose.
+        "Asked about a cited article, say what it says and whether the answer used it; never call a "
+        "citation a mistake."
     )
-    # "nostream": LangGraph leaves this call's tokens out of the message stream. The reply a client
-    # shows is the one this node returns via reply() (with its sources and run id); without the tag the
-    # web app showed the explanation twice, once as Claude's streamed tokens and once as the reply.
-    llm = ChatAnthropic(model=_EXPLAIN_MODEL, thinking={"type": "disabled"}, tags=["nostream"])
-    response = llm.invoke([system, *history])
-    return reply(_without_label(str(response.text)))
+    agent = create_agent(
+        _explain_model(),
+        tools=explain_tools.TOOLS,
+        system_prompt=system,
+        middleware=[ToolCallLimitMiddleware(run_limit=_EXPLAIN_TOOL_CALLS)],
+        name="explain_agent",
+    )
+    result = agent.invoke({"messages": _explain_history(state["messages"], _EXPLAIN_HISTORY)})
+    messages = result["messages"]
+    return reply(_without_label(str(messages[-1].text)), looked_up=explain_tools.files_read(messages))
 
 
 def build_supervisor_graph(checkpointer=None):

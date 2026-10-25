@@ -17,7 +17,7 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 - **Hybrid GraphRAG.** Neo4j-native vector and full-text search over the knowledge base, then graph grounding (`Article → CITES_RULE → Rule`) to attach the governing rules.
 - **Typed routing with a cautious fallback.** TypeSafe's Jev decision model returns probabilities, not prose, so routing is plain thresholds: an uncertain message goes to the knowledge base instead of a wrong procedure.
 - **Online evaluation on every real conversation.** LangSmith code checks and Jev judges (made-up facts, contradictions, usefulness, retrieval relevance vs knowledge gaps), alerts to Slack, and consultant 👍 👎 on each answer.
-- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 286 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
+- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 300 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
 
 ## Architecture
 
@@ -56,6 +56,7 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 | Procedures and rules as graph nodes, not prompt text | Policy is enforced structurally: an action's governing rules are edges, so they can't be skipped or misremembered by a model. Conditions, actions and APIs are shared libraries referenced from many steps. |
 | A deterministic walk; an LLM only for free-text tickets | Every other check is a known lookup, so code is faster, cheaper and auditable. Reading a ticket is language, so that one condition uses Claude, with a retry when it's unsure. |
 | Citations read by code from Neo4j | A model can't cite a rule that doesn't exist. An online check (`citations_exist`) guards it anyway. |
+| An agent only where what to read depends on the question | The explain step is a small Claude agent with read-only tools over the procedures, rules and articles (an in-memory folder, no disk access), so "why did you cite KB-006?" reads that article and "why didn't it check for a credit?" the procedure, instead of guessing. Everything else follows fixed steps. |
 | Jev for routing and judging | Typed probabilities, no parsing, about 0.3 s a call: routing thresholds and judge alerts are numbers you can tune. Jev never judges its own routing (that's checked offline). |
 | Server-side proxy for the web app | The browser never sees the agent's URL or API key; the password is checked in `proxy.ts` and again in the proxy route. |
 | Socket Mode for Slack | An internal tool with no public endpoint needed; the trade-off (a long-running process) is the reason HTTP mode is on the roadmap now the agent is deployed. |
@@ -100,12 +101,12 @@ classify_intent (*MODEL: Jev*): what does consultant want done?
         |                           |                                |
         v                           |                                v
 load_crm: customer's CRM record     |                              explain_answer
-  (troubleshooting only); no        |                              (*MODEL: Claude*):
+  (troubleshooting only); no        |                              (*MODEL: Claude agent*):
   customer yet: ask which one       |                              last 10 messages,
-        |                           |                              those about a     
-        v                           v                              customer labelled 
-match_procedure (*MODEL: Jev*)      |                              with its ID, + the
-  which of 20 procedures;           |                              rules' wording    
+        |                           |                              labelled by customer;
+        v                           v                              reads the procedures,
+match_procedure (*MODEL: Jev*)      |                              rules, articles it needs
+  which of 20 procedures;           |                              (ls, read_file, grep)
   "none" -> knowledge base -------->+                                |
         |                           |                                |
         v                           v                                |
@@ -423,7 +424,7 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 
 | Suite | What it covers | Count |
 |---|---|---|
-| **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites | 286 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
+| **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites | 300 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
 | **Vitest** (`web/`) | the password gate, message formats, panel sizes, the feedback and full-source hooks | 40 |
 | **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding | 23 |
 | **GitHub Actions** | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | — |
@@ -474,7 +475,8 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 ```
 .
 ├── agent/                      the LangGraph agent
-│   ├── supervisor.py           the main graph: customer check, Neo4j check, routing (Jev), explain
+│   ├── supervisor.py           the main graph: customer check, Neo4j check, routing (Jev), the explain agent
+│   ├── explain_tools.py        the explain agent's read-only tools: procedures, rules and articles as files
 │   ├── procedural_executor.py  the troubleshooting walk: a subgraph that follows a procedure step by step
 │   ├── ticket_interpreter.py   Claude reads a customer's ticket (ticket conditions only)
 │   ├── graph_rag_chain.py      the knowledge-base path: hybrid search, graph grounding, Claude answers

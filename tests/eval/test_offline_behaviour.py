@@ -130,8 +130,21 @@ def test_conversation_judge_scores_the_explanation(monkeypatch):
     result = {r["key"]: r["score"] for r in conversation_turns(CONVERSATION["inputs"], GOOD_TURNS, CONVERSATION["outputs"])["results"]}
 
     assert len(jev.requests) == 1  # only the explanation turn is judged
-    assert jev.requests[0]["state"]["rule_wording"][0].startswith("R012: ")  # the rule the earlier reply cited
+    assert jev.requests[0]["state"]["files_read"] == []  # the explanation read no file
     assert result == {"facts_covered": 0.5, "supported": True, "no_contradiction": True, "on_target": True, "right_customer": False}
+
+
+def test_conversation_judge_sees_the_files_the_explanation_read(monkeypatch):
+    """Without them, an explanation quoting KB-006 (which its agent read) looked made up."""
+    e = example("conversations", "conv-kb-why-cited")
+    jev = FakeJev({"fact_1": 0.9, "fact_2": 0.9, "made_up": 0.1, "contradicts_earlier": 0.1})
+    use_jev(monkeypatch, jev)
+    turns = {"turns": [{"text": "The first replacement in 12 months is free.", "citations": ["KB-006", "R004"]},
+                       {"text": "KB-006 covers SIM replacement fees.", "citations": [], "looked_up": ["articles/KB-006.md"]}]}
+
+    conversation_turns(e["inputs"], turns, e["outputs"])
+
+    assert jev.requests[0]["state"]["files_read"][0].startswith("# KB-006: SIM Replacement Process and Fees")
 
 
 # --- adversarial ---

@@ -7,6 +7,7 @@ full graph, with real Claude and Neo4j calls, is covered in tests/e2e/.
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_typesafe import ChoiceAnswer, ClassifierResponse
@@ -19,6 +20,7 @@ from langchain_typesafe.client import (
 )
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END
+from pydantic import Field
 
 from agent.procedural_executor import build_procedural_executor_graph
 from agent.utils import consultant_message, reply_of
@@ -30,7 +32,6 @@ from agent.supervisor import (
     check_neo4j,
     load_crm,
     _explain_history,
-    _rule_wording,
     _JEV_TIMEOUT,
     _classifier,
     _with_jev_retry,
@@ -64,6 +65,33 @@ class FakeClaude:
         """Record the messages Claude was shown and return the fixed result."""
         self.shown.append(messages)
         return self.result
+
+
+class FakeAgentClaude(GenericFakeChatModel):
+    """Stands in for Claude in the explain agent: replays fixed replies in order (tool calls, then
+    the answer) and records the messages it was shown each time."""
+
+    shown: list = Field(default_factory=list)
+
+    def bind_tools(self, tools, **kwargs):
+        """The agent binds its tools; the replies are fixed, so there is nothing to bind."""
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.shown.append(list(messages))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def explain_claude(monkeypatch, *replies) -> FakeAgentClaude:
+    """Make explain_answer's agent use a FakeAgentClaude replaying `replies` (text, or AIMessages)."""
+    fake = FakeAgentClaude(messages=iter([r if isinstance(r, AIMessage) else AIMessage(r) for r in replies]))
+    monkeypatch.setattr("agent.supervisor._explain_model", lambda: fake)
+    return fake
+
+
+def reads(path: str) -> AIMessage:
+    """Claude asking to read one file."""
+    return AIMessage("", tool_calls=[{"name": "read_file", "args": {"path": path}, "id": f"call-{path}"}])
 
 
 class FakeJev:
@@ -433,10 +461,10 @@ def test_route_after_match_falls_back_to_the_knowledge_base(matched, expected):
 
 def test_explain_with_nothing_earlier_does_not_call_claude(monkeypatch):
     """A first message has nothing to explain: fixed text, and Claude is never created."""
-    def boom(*args, **kwargs):
+    def boom():
         raise AssertionError("Claude must not be called")
 
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", boom)
+    monkeypatch.setattr("agent.supervisor._explain_model", boom)
 
     result = explain_answer({"messages": conversation("why?"), "customer_id": "CUST-1005"})
 
@@ -465,11 +493,9 @@ A_THEN_B_THEN_A = [
 def test_explain_shows_claude_each_message_labelled_with_its_customer(monkeypatch):
     """The bug this fixes: A, then B, then a "why?" about A. Every message tells Claude whose it
     was, replies carry their sources, and the prompt names the current customer."""
-    fake = FakeClaude(SimpleNamespace(text="Because all three checks said no."))
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", fake)
-    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "- R012: Tier 2 needs a summary.")
+    fake = explain_claude(monkeypatch, "Because all three checks said no.")
 
-    result = explain_answer({"messages": A_THEN_B_THEN_A, "customer_id": "CUST-1001"})
+    explain_answer({"messages": A_THEN_B_THEN_A, "customer_id": "CUST-1001"})
 
     system, *history = fake.shown[0]
     assert [m.content for m in history] == [
@@ -480,45 +506,65 @@ def test_explain_shows_claude_each_message_labelled_with_its_customer(monkeypatc
         "[CUST-1001] why did you say escalate",
     ]
     assert "customer CUST-1001" in system.content
-    assert "R012: Tier 2 needs a summary." in system.content
 
 
-def test_explain_cites_nothing(monkeypatch):
-    """An explanation is not a new source; the answer it explains already showed its sources."""
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", FakeClaude(SimpleNamespace(text="...")))
-    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "")
+def test_explain_cites_nothing_and_reads_nothing_it_doesnt_need(monkeypatch):
+    """An explanation is not a new source; a "why?" after a walk needs no file, so none is listed."""
+    explain_claude(monkeypatch, "Because all three checks said no.")
 
     result = explain_answer({"messages": A_THEN_B_THEN_A, "customer_id": "CUST-1001"})
 
     assert reply_of(result).citations == []
+    assert "looked_up" not in result["messages"][-1].additional_kwargs
 
 
-def test_explain_with_no_cited_rule_says_none(monkeypatch):
-    """With no rule cited in the window, the prompt says so, so nothing else gets called a rule."""
-    fake = FakeClaude(SimpleNamespace(text="..."))
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", fake)
-    messages = [said("roaming", "CUST-1005"), answered("Device not compatible", "ACT-027"), said("what does that rule say?", "CUST-1005")]
-    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "")
-
-    explain_answer({"messages": messages, "customer_id": "CUST-1005"})
-
-    assert "Rules cited in the conversation:\n(none)" in fake.shown[0][0].content
+KB_ANSWER_THEN_WHY = [
+    HumanMessage("When is the SIM replacement fee waived?"),
+    answered("The first replacement in 12 months is free.", "KB-006", "R004", "KB-005", "KB-021"),
+    HumanMessage("why did you cite KB-006?"),
+]
 
 
-# --- _explain_history and _rule_wording ---
+def test_explain_reads_the_article_it_is_asked_about(monkeypatch):
+    """The bug this fixes: asked "why did you cite KB-006?", Claude saw only the ID in "Sources: …",
+    said it couldn't see the article, and sometimes disowned the citation. Now it reads that one
+    article (not the other cited ones), and the reply lists what it read."""
+    fake = explain_claude(monkeypatch, reads("articles/KB-006.md"), "KB-006 covers SIM replacement fees.")
+
+    result = explain_answer({"messages": KB_ANSWER_THEN_WHY})
+
+    tool_result = fake.shown[1][-1]
+    assert tool_result.type == "tool" and "rolling 12-month window" in tool_result.content
+    assert reply_of(result) == ("KB-006 covers SIM replacement fees.", [])
+    assert result["messages"][-1].additional_kwargs["looked_up"] == ["articles/KB-006.md"]
+    assert "never call a citation a mistake" in fake.shown[0][0].content  # all 5 search results are cited on purpose
+
+
+def test_explain_stops_looking_things_up_after_the_limit(monkeypatch):
+    """At most _EXPLAIN_TOOL_CALLS look-ups per explanation; past that, Claude answers with what it has."""
+    fake = explain_claude(monkeypatch, *[reads(f"articles/KB-00{n}.md") for n in range(1, 7)], "Done.")
+
+    result = explain_answer({"messages": KB_ANSWER_THEN_WHY})
+
+    files_read = [m for m in fake.shown[-1] if m.type == "tool" and m.content.startswith("# KB-")]
+    assert len(files_read) == 4
+    assert reply_of(result).text == "Done."
+    assert len(result["messages"][-1].additional_kwargs["looked_up"]) == 4
+
+
+# --- _explain_history ---
 
 
 def test_explain_history_keeps_the_last_messages_and_starts_on_a_consultant_message():
     """Only the last `limit` messages are kept, and a reply cut off from its question is dropped
     (Claude needs the conversation to start with the consultant)."""
-    history, cited = _explain_history(A_THEN_B_THEN_A, limit=4)
+    history = _explain_history(A_THEN_B_THEN_A, limit=4)
 
     assert [m.content for m in history] == [
         "[CUST-1005] customer cannot activate roaming",
         "[reply about CUST-1005] The device does not support roaming\n\nSources: ACT-027",
         "[CUST-1001] why did you say escalate",
     ]
-    assert cited == ["ACT-027"]
 
 
 def test_explain_history_leaves_a_message_with_no_customer_id_unlabelled():
@@ -526,7 +572,7 @@ def test_explain_history_leaves_a_message_with_no_customer_id_unlabelled():
     customer's answer, so it and its reply get no label (a "[general]" label once misled Claude)."""
     messages = [*A_THEN_B_THEN_A[:2], HumanMessage("why did it end up at Tier 2?"), AIMessage("All three checks said no")]
 
-    history, _ = _explain_history(messages, limit=10)
+    history = _explain_history(messages, limit=10)
 
     assert [m.content for m in history[2:]] == ["why did it end up at Tier 2?", "All three checks said no"]
 
@@ -541,7 +587,7 @@ def test_explain_history_does_not_label_a_saved_reply_twice():
         AIMessage("[reply, general] [reply, general] It is waived once a year"),
     ]
 
-    history, _ = _explain_history(messages, limit=10)
+    history = _explain_history(messages, limit=10)
 
     assert [m.content for m in history] == [
         "[CUST-1001] why?",
@@ -554,9 +600,7 @@ def test_explain_history_does_not_label_a_saved_reply_twice():
 def test_explain_removes_a_label_claude_copies_into_its_reply(monkeypatch):
     """Earlier replies in the history start with "[reply about ...]", and Claude sometimes starts its
     own the same way; the label must not reach the consultant or the saved conversation."""
-    fake = FakeClaude(SimpleNamespace(text="[reply about CUST-1001] Because all three checks said no."))
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", fake)
-    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "")
+    explain_claude(monkeypatch, "[reply about CUST-1001] Because all three checks said no.")
 
     result = explain_answer({"messages": A_THEN_B_THEN_A, "customer_id": "CUST-1001"})
 
@@ -566,9 +610,7 @@ def test_explain_removes_a_label_claude_copies_into_its_reply(monkeypatch):
 def test_explain_focuses_on_a_named_customer_or_on_what_the_question_refers_to(monkeypatch):
     """A question naming a customer is answered about that customer; one naming none gets no
     customer forced on it (it is about the answer it refers to)."""
-    fake = FakeClaude(SimpleNamespace(text="..."))
-    monkeypatch.setattr("agent.supervisor.ChatAnthropic", fake)
-    monkeypatch.setattr("agent.supervisor._rule_wording", lambda ids: "")
+    fake = explain_claude(monkeypatch, "...", "...")
     earlier = [said("roaming", "CUST-1001"), answered("Escalate", "ACT-015")]
 
     explain_answer({"messages": [*earlier, said("why?", "CUST-1001")]})
@@ -577,19 +619,6 @@ def test_explain_focuses_on_a_named_customer_or_on_what_the_question_refers_to(m
     named, unnamed = fake.shown[0][0].content, fake.shown[1][0].content
     assert "The question is about customer CUST-1001" in named
     assert "names no customer" in unnamed and "CUST-1001" not in unnamed
-
-
-def test_rule_wording_with_nothing_cited_needs_no_neo4j():
-    """No IDs: no query, empty wording."""
-    assert _rule_wording([]) == ""
-
-
-def test_rule_wording_reads_only_the_rules_from_neo4j():
-    """(Needs Neo4j.) Of the cited IDs, only rules have wording; actions and articles match nothing."""
-    wording = _rule_wording(["ACT-015", "R012", "KB-005"])
-
-    assert wording == "- R012: Tier 2 escalations require a documented troubleshooting summary. " \
-                      "Every Tier 2 escalation must include a written summary of the steps already attempted"
 
 
 def test_a_walk_saves_its_reply_but_not_its_step_trace(monkeypatch):

@@ -20,8 +20,8 @@ The unsupported and unhelpful wording matches the live LangSmith judges (kb_unsu
 kb_unhelpful), so an offline score and an online score mean the same thing.
 
 Conversations (conversation_turns): one call per judged turn (an explanation, or a follow-up with
-key facts). Jev reads the conversation so far, labelled by customer as the agent's explain step
-sees it, the wording of the rules cited, and the turn's reply. Explanations get the live explain
+key facts). Jev reads what the agent's explain step had: the conversation so far, labelled by
+customer, and the files it chose to read (its reply's looked_up); and the turn's reply. Explanations get the live explain
 judges' questions (made up, contradicts an earlier answer, off target) and, when the question is
 about one customer, "does it describe another customer?".
 
@@ -153,12 +153,6 @@ def kb_answer(inputs: dict, outputs: dict, reference_outputs: dict) -> dict:
 # --- conversations ---
 
 
-@lru_cache(maxsize=1)
-def _rules() -> dict[str, dict]:
-    """data/rules.json by rule ID."""
-    return {r["rule_id"]: r for r in load_json("rules.json")}
-
-
 def _transcript(turns_in: list[dict], turns_out: list[dict], upto: int) -> list[str]:
     """The conversation up to turn `upto` (its question included, its reply not), labelled by customer
     the way the agent's explain step shows it: "[CUST-1001] …", "[reply about CUST-1001] …"."""
@@ -173,12 +167,12 @@ def _transcript(turns_in: list[dict], turns_out: list[dict], upto: int) -> list[
     return lines
 
 
-def _rule_wording(turns_out: list[dict], upto: int) -> list[str]:
-    """The wording of every rule the replies before turn `upto` cited, as the explain step gets it."""
-    ids = []
-    for out in turns_out[:upto]:
-        ids += [c for c in out.get("citations", []) if c in _rules() and c not in ids]
-    return [f"{i}: {_rules()[i]['description']}. {_rules()[i]['detail']}" for i in ids]
+def _files_read(turn_out: dict) -> list[str]:
+    """The text of the files an explanation read (its looked_up paths), from the same folder its
+    tools read (agent/explain_tools.py). Without it, a quote from a file looked made up."""
+    from agent.explain_tools import files
+
+    return [files()[path] for path in turn_out.get("looked_up", []) if path in files()]
 
 
 def _fact_questions(facts: list[str], what: str = "reply") -> dict:
@@ -197,7 +191,7 @@ def turn_questions(expected: dict) -> dict:
     questions = _fact_questions(expected.get("facts", []))
     if expected["path"] == "explain":
         questions["made_up"] = Noul(
-            instructions="Does the reply state any fact that appears nowhere in the conversation or the rule wording?",
+            instructions="Does the reply state any fact that appears nowhere in the conversation or the files the assistant read?",
             criteria=NoulCriteria(
                 true="It adds a fact, number, step, reason or rule found nowhere in the conversation.",
                 false="Everything it says is in the conversation. Rewording, summarising, or saying \"that isn't in the earlier answer\" is fine.",
@@ -244,7 +238,7 @@ def conversation_turns(inputs: dict, outputs: dict, reference_outputs: dict) -> 
                 continue
             state = {
                 "conversation": _transcript(turns_in, turns_out, n),
-                "rule_wording": _rule_wording(turns_out, n),
+                "files_read": _files_read(turns_out[n]),
                 "reply": turns_out[n].get("text", ""),
             }
             response = _jev().invoke({"state": state, "questions": turn_questions(expected)})

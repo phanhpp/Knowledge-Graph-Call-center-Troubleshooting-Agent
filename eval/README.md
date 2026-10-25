@@ -248,7 +248,9 @@ Several turns on one thread: a walk then "why?"; a walk then "what does that rul
 - **Code, every turn:** the path, the procedure, the current customer; explanations cite nothing.
 - **Jev, every explanation or follow-up:** key facts stated, nothing made up, no contradiction of an earlier answer, answers the question, stays on the customer asked about (wording matches the live explain judges).
 
-**Baseline (3 runs):** paths, procedures and customers 18/18; facts 0.91; 1 contradiction in 15. **Finding:** asked "why did you cite KB-006?", the explanation sometimes says it can't see the article and disowns the citation. The explain step looks up the wording of cited rules, but not of cited articles.
+Jev sees what the explanation saw: the conversation and the files its agent read (`looked_up` on the reply).
+
+**Baseline (3 runs):** paths, procedures and customers 18/18; nothing made up 14/15; no contradictions 15/15; facts 0.93. **What this suite found:** asked "why did you cite KB-006?", the explain step couldn't see the article and disowned the citation; asked "why?", it guessed procedure steps it had never seen. Explain is now a small agent that reads the procedures, rules and articles it needs (made up went from 11/15 to 14/15, contradictions from 13/15 to 15/15).
 
 ### Adversarial suite (6)
 
