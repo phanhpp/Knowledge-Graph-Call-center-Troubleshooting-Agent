@@ -89,6 +89,27 @@ uv run python eval/online/utils/build_valid_ids.py  # after changing data/, then
 - The table shows each check's passes, each miss ("expected … got …") and latency, also saved to `results/<suite>-<tag>.json`. To compare two versions: LangSmith → Datasets & Experiments → the dataset → Compare.
 - A new suite = a JSONL file + a `SUITES` entry (and `JUDGES`, if Jev judges it) + a `thresholds.yaml` section.
 
+### What's in a dataset
+
+Each dataset is a `.jsonl` file, one example per line, with 4 parts: **`id`** (a fixed name, e.g. `walk-PROC-001`), **`inputs`** (what the consultant sends the agent), **`outputs`** (the right answer the code checks and Jev judges compare against) and **`metadata`** (notes for people, never scored).
+
+| Dataset | `inputs` | `outputs` (the right answer) |
+| --- | --- | --- |
+| **walks** (20) | message + customer | path, procedure, action, its rules, each step's yes/no, how the walk ended (`exit`) |
+| **routing** (27) | message + customer (or none) | path + procedure (or none) |
+| **knowledge base** (15) | question | path, answerable or not, the article that holds the answer, 2–3 key facts, a short reference answer |
+| **conversations** (6) | a list of turns (text + customer) | per turn: path, procedure, the customer after it; for explanations, the key facts (and which customer to stay on) |
+| **guards** (4) | message + an odd customer ID (unknown, malformed, none, two) | the fixed reply it must start with, the error, the most model calls allowed, the customer after it |
+| **adversarial** (9) | message (or turns) | injected or not (must it be refused?), what it must not do, the policy it must cite or the details it must not show |
+
+For example, a walk:
+
+```
+inputs:    "customer called back, roaming still won't switch on and they fly out tomorrow", CUST-1002
+outputs:   troubleshooting → PROC-001 → ACT-001, no rules, steps [[1, yes]], exit: first-yes
+metadata:  why this customer fits: "roaming off; open ticket: roaming still not working after we enabled it"
+```
+
 ### Code checks, Jev judges and tests
 
 |  | What it is | When it runs |
@@ -148,7 +169,7 @@ One troubleshooting walk per procedure: a consultant message and a customer whos
 | `steps_correct` | Did it check the right steps, in order, with the right yes/no? |
 | `has_checklist` | Does the reply show "Why:" and the steps it checked? |
 
-**The right answers come from `oracle.py`:**
+**The right answers come from the oracle** (`offline/oracle.py`): a small program that works out a walk's right answer from `data/` alone. It follows the procedure's steps in order, checks each one against the customer's record in the mock CRM, and stops at the first yes (or takes the fallback). It returns the action, its rules, and every step with its yes/no.
 
 ```
  building the suite (only when the walks change)
@@ -163,7 +184,7 @@ One troubleshooting walk per procedure: a consultant message and a customer whos
                                              no → data/ changed → rebuild the suite
 ```
 
-Why an oracle: by hand is slow and error-prone; copying the agent's replies would make its bugs the "right" answers; the oracle is separate code, so it won't share the agent's mistakes. Ticket steps can't be computed, so they use a human label.
+**Its purpose:** right answers that are quick to make and trustworthy. Writing them by hand is slow and error-prone; copying the agent's replies would make its bugs the "right" answers; the oracle is separate code, so it won't share the agent's mistakes, and a test can recompute the answers whenever `data/` changes. Ticket steps can't be computed (reading a ticket is judgement), so they use a human label.
 
 **Today's result (3 runs):** 20/20 on every check. **To change a walk:** edit `WALKS` in `build/walks.py`, then run `uv run python -m eval.offline.build.walks`.
 

@@ -356,7 +356,7 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 
 ### Offline: golden examples, before a change ships
 
-81 golden examples across 6 datasets, each with its right answer, run end to end through the real agent as LangSmith experiments:
+81 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
 
 ```
  golden examples ──► the real agent ──► scored ─────────────────────────► gate
