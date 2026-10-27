@@ -376,7 +376,7 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 | CI, live | the offline eval, with its gate | planned: PRs that change `agent/`, `data/` or `eval/`, weekly, and on demand |
 
 
-| Suite               | What it checks                                                      | Baseline (repeated runs)                       |
+| Suite               | What it checks                                                      | Today's result (repeated runs)                       |
 | ------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
 | Walks (20)          | one per procedure: the right action, rules and steps                | 20/20                                          |
 | Routing (27) | easily confused procedures, policy vs case questions, off-topic, typos | 27/27 |

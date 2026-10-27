@@ -10,13 +10,14 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
 | Every pull request | GitHub Actions | `.github/workflows/ci.yml` | 2 jobs | runs in CI, no secrets; required before merging to `main` |
 | Data and graph | GitHub Actions | `.github/workflows/data-integrity.yml` | 1 job | runs in CI with a throwaway Neo4j, on data pull requests |
-| Production traffic | LangSmith online evaluators | `eval/` | 3 code checks + 7 Jev judges | runs in LangSmith on every real conversation |
+| Production traffic | LangSmith online evaluators | `eval/online/` | 3 code checks + 7 Jev judges | runs in LangSmith on every real conversation |
+| Agent quality, before a change ships | offline eval (not a test suite) | `eval/offline/` | 81 golden examples, scored by code checks and Jev judges | run with `eval/offline/run.py`; see `eval/README.md`. Its own code is covered by the pytest tests below (Offline eval) |
 
 ## Running them
 
 ```bash
 uv run pytest -m "not e2e"        # fast suite: unit and integration tests (Neo4j with the graph loaded)
-uv run pytest                     # everything, including the 25 end-to-end tests (real model calls)
+uv run pytest                     # everything, including the 31 end-to-end tests (real model calls)
 uv run pytest tests/slack_bot     # one area
 
 cd web
@@ -34,28 +35,30 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 
 ## pytest (`tests/`)
 
-| File | Tests | Covers |
-|---|---|---|
-| `test_validate.py` | 7 | `etl.validate`: IDs and fields match across the data files; every procedure can finish (no cycles, all steps reachable, a fallback action on the last step) |
-| `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
-| `test_procedural_executor.py` | 16 | the troubleshooting walk: fetching steps, advancing or resolving, the reply format ("Why:" and the checked steps), ticket conditions read by Claude. Pins the infinite-loop bug fixed by routing with a `Command` |
-| `test_supervisor.py` | 55 | the main graph: customer checks, the Neo4j check, routing with a fake Jev (a likely prompt injection refused whatever the path, "unclear" when no path is likely enough, "irrelevant", the fixed replies), Jev retried when busy (529, 429) or the connection fails (dropped, timed out after 10 s) but not on a bad key, `load_crm`, and the explain agent with a fake Claude that calls tools: the history labels, a label copied by Claude removed, the article it's asked about read (and listed in `looked_up`), at most 4 look-ups |
-| `test_explain_tools.py` | 14 | the explain agent's tools: every procedure, rule and article and nothing else (`.env`, the CRM, the code and `../` paths are "not found"), a procedure file's steps, `grep` returning sentences and at most 20, a bad pattern, `looked_up` counting only what the agent actually saw |
-| `test_graph_rag_chain.py` | 3 | the knowledge-base path: hybrid search, graph grounding, the answer and its citations (needs keys) |
-| `test_sources.py` | 12 | the text behind each cited ID (short on replies, full on request), and `reply()`: citations unchanged, sources added, the run id is the turn's **root** run |
-| `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
-| `test_config.py` | 3 | the Neo4j check: a down Neo4j gives a reason and is recorded as an **errored traced step**, so alerts see it |
-| `eval/test_offline_walks.py` | 14 | the offline walks suite without keys: the oracle's answers, the saved answer key still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
-| `eval/test_offline_behaviour.py` | 15 | the offline guards, conversations and adversarial suites without keys: the saved examples still match their build scripts, the guard code checks (fixed replies, call limits, checks that don't apply), the per-turn conversation code checks, refused exactly when it's an injection, the conversation and adversarial Jev judges with a fake Jev (the transcript labelled like the agent's, the questions asked) |
-| `eval/test_offline_kb.py` | 12 | the offline knowledge-base suite without keys: the saved questions, recall@5 and MRR from the citations, the Jev judge with a fake Jev (the questions asked, probabilities turned into scores, a failed judge marked as an error), the gate's mean thresholds |
-| `eval/test_offline_routing.py` | 4 | the offline routing suite without keys: the saved examples still match `build/routing.py`, every procedure pair has one message per side, general questions expect no procedure, a miss shows where the message went |
-| `eval/test_online_code_evaluators.py` | 17 | the online code evaluators, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
-| `slack_bot/` (8 files) | 76 | message parsing, Slack formatting, access control (members channel, fails closed), conversation threads, saved DM conversations, the `/agent` and DM handlers, Bolt wiring. All with fake Slack events: no network |
-| `e2e/troubleshooting/` | 6 | the full graph with real models: field, chain and ticket conditions |
-| `e2e/open_ended/` | 3 | knowledge-base questions, including the fee question an earlier classifier misrouted |
-| `e2e/follow_ups/` | 11 | `explain`, multi-customer conversations, conversations saved and resumed |
-| `e2e/judges/` | 6 | the offline knowledge-base judge with the real Jev: one good answer passes, five known-bad ones (wrong facts, vague, made-up amounts) are caught |
-| `e2e/errors/` | 5 | unknown customer IDs stop before any paid model call |
+Grouped by the part each file tests. **Offline eval** tests check the eval itself scores correctly (made-up replies, no model calls, except `e2e/judges/`); they don't score the agent: that's what an offline eval run does.
+
+| Part | File | Tests | Covers |
+|---|---|---|---|
+| Agent | `test_supervisor.py` | 55 | the main graph: customer checks, the Neo4j check, routing with a fake Jev (a likely prompt injection refused whatever the path, "unclear" when no path is likely enough, "irrelevant", the fixed replies), Jev retried when busy (529, 429) or the connection fails (dropped, timed out after 10 s) but not on a bad key, `load_crm`, and the explain agent with a fake Claude that calls tools: the history labels, a label copied by Claude removed, the article it's asked about read (and listed in `looked_up`), at most 4 look-ups |
+| Agent | `test_explain_tools.py` | 14 | the explain agent's tools: every procedure, rule and article and nothing else (`.env`, the CRM, the code and `../` paths are "not found"), a procedure file's steps, `grep` returning sentences and at most 20, a bad pattern, `looked_up` counting only what the agent actually saw |
+| Agent | `test_procedural_executor.py` | 16 | the troubleshooting walk: fetching steps, advancing or resolving, the reply format ("Why:" and the checked steps), ticket conditions read by Claude. Pins the infinite-loop bug fixed by routing with a `Command` |
+| Agent | `test_graph_rag_chain.py` | 3 | the knowledge-base path: hybrid search, graph grounding, the answer and its citations (needs keys) |
+| Agent | `test_sources.py` | 12 | the text behind each cited ID (short on replies, full on request), and `reply()`: citations unchanged, sources added, the run id is the turn's **root** run |
+| Agent | `test_config.py` | 3 | the Neo4j check: a down Neo4j gives a reason and is recorded as an **errored traced step**, so alerts see it |
+| Data | `test_validate.py` | 7 | `etl.validate`: IDs and fields match across the data files; every procedure can finish (no cycles, all steps reachable, a fallback action on the last step) |
+| Data | `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
+| Web routes | `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
+| Slack bot | `slack_bot/` (8 files) | 76 | message parsing, Slack formatting, access control (members channel, fails closed), conversation threads, saved DM conversations, the `/agent` and DM handlers, Bolt wiring. All with fake Slack events: no network |
+| Offline eval | `eval/test_offline_walks.py` | 14 | the walks suite scores correctly: the oracle's right answers, the saved right answers still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
+| Offline eval | `eval/test_offline_routing.py` | 4 | the routing examples still match `build/routing.py`; every procedure pair has one message per side; general questions expect no procedure; a miss shows where the message went |
+| Offline eval | `eval/test_offline_kb.py` | 12 | the knowledge-base suite scores correctly: the saved questions, recall@5 and MRR from the citations, the Jev judges with a fake Jev (the questions asked, probabilities turned into scores, a failed call marked as an error), the gate's averages |
+| Offline eval | `eval/test_offline_behaviour.py` | 15 | the guards, conversations and adversarial suites score correctly: the saved examples still match their build scripts, the guard and per-turn conversation code checks, refused exactly when it's an injection, the conversation and adversarial Jev judges with a fake Jev |
+| Offline eval | `e2e/judges/` | 6 | the knowledge-base Jev judges with the **real** Jev: one good answer passes, five known-bad ones (wrong facts, vague, made-up amounts) are caught |
+| Online eval | `eval/test_online_code_evaluators.py` | 17 | the online code checks, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
+| End-to-end | `e2e/troubleshooting/` | 6 | the full graph with real models: field, chain and ticket conditions |
+| End-to-end | `e2e/open_ended/` | 3 | knowledge-base questions, including the fee question an earlier classifier misrouted |
+| End-to-end | `e2e/follow_ups/` | 11 | `explain`, multi-customer conversations, conversations saved and resumed |
+| End-to-end | `e2e/errors/` | 5 | unknown customer IDs stop before any paid model call |
 
 ## Vitest (`web/lib/`)
 
