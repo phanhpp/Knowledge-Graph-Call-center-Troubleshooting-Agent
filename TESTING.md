@@ -4,7 +4,7 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 
 | Layer | Tool | Where | Tests | Needs |
 |---|---|---|---|---|
-| Agent, data, Slack bot | pytest | `tests/` | 300 (269 fast + 31 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
+| Agent, data, Slack bot | pytest | `tests/` | 311 (280 fast + 31 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
 | Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
@@ -39,14 +39,14 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 | `test_validate.py` | 7 | `etl.validate`: IDs and fields match across the data files; every procedure can finish (no cycles, all steps reachable, a fallback action on the last step) |
 | `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
 | `test_procedural_executor.py` | 16 | the troubleshooting walk: fetching steps, advancing or resolving, the reply format ("Why:" and the checked steps), ticket conditions read by Claude. Pins the infinite-loop bug fixed by routing with a `Command` |
-| `test_supervisor.py` | 45 | the main graph: customer checks, the Neo4j check, routing with a fake Jev, Jev retried when busy (529, 429) or the connection fails (dropped, timed out after 10 s) but not on a bad key, `load_crm`, and the explain agent with a fake Claude that calls tools: the history labels, a label copied by Claude removed, the article it's asked about read (and listed in `looked_up`), at most 4 look-ups |
+| `test_supervisor.py` | 55 | the main graph: customer checks, the Neo4j check, routing with a fake Jev (a likely prompt injection refused whatever the path, "unclear" when no path is likely enough, "irrelevant", the fixed replies), Jev retried when busy (529, 429) or the connection fails (dropped, timed out after 10 s) but not on a bad key, `load_crm`, and the explain agent with a fake Claude that calls tools: the history labels, a label copied by Claude removed, the article it's asked about read (and listed in `looked_up`), at most 4 look-ups |
 | `test_explain_tools.py` | 14 | the explain agent's tools: every procedure, rule and article and nothing else (`.env`, the CRM, the code and `../` paths are "not found"), a procedure file's steps, `grep` returning sentences and at most 20, a bad pattern, `looked_up` counting only what the agent actually saw |
 | `test_graph_rag_chain.py` | 3 | the knowledge-base path: hybrid search, graph grounding, the answer and its citations (needs keys) |
 | `test_sources.py` | 12 | the text behind each cited ID (short on replies, full on request), and `reply()`: citations unchanged, sources added, the run id is the turn's **root** run |
 | `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
 | `test_config.py` | 3 | the Neo4j check: a down Neo4j gives a reason and is recorded as an **errored traced step**, so alerts see it |
 | `eval/test_offline_walks.py` | 14 | the offline walks suite without keys: the oracle's answers, the saved answer key still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
-| `eval/test_offline_behaviour.py` | 13 | the offline guards, conversations and adversarial suites without keys: the saved examples still match their build scripts, the guard checks (fixed replies, call limits, checks that don't apply), the per-turn conversation checks, the conversation and adversarial judges with a fake Jev (the transcript labelled like the agent's, the questions asked) |
+| `eval/test_offline_behaviour.py` | 15 | the offline guards, conversations and adversarial suites without keys: the saved examples still match their build scripts, the guard code checks (fixed replies, call limits, checks that don't apply), the per-turn conversation code checks, refused exactly when it's an injection, the conversation and adversarial Jev judges with a fake Jev (the transcript labelled like the agent's, the questions asked) |
 | `eval/test_offline_kb.py` | 12 | the offline knowledge-base suite without keys: the saved questions, recall@5 and MRR from the citations, the Jev judge with a fake Jev (the questions asked, probabilities turned into scores, a failed judge marked as an error), the gate's mean thresholds |
 | `eval/test_offline_routing.py` | 4 | the offline routing suite without keys: the saved examples still match `build/routing.py`, every procedure pair has one message per side, general questions expect no procedure, a miss shows where the message went |
 | `eval/test_online_code_evaluators.py` | 17 | the online code evaluators, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
@@ -102,7 +102,7 @@ Two GitHub Actions workflows, both without secrets.
 | Job | Runs |
 |---|---|
 | `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
-| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 263 pass, 6 skip because they need API keys |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 274 pass, 6 skip because they need API keys |
 
 **`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
 

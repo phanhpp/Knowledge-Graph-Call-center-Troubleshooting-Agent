@@ -83,4 +83,4 @@ Stack: LangGraph (plain nodes — no `deepagents`, see below), Neo4j (graph + na
 
 ## TODO
 
-- **Ask what the problem is when a message is unclear.** Done for the customer: a message naming no customer is fine (a general question needs none); a named ID is checked first (`check_customer`), and troubleshooting with no customer yet replies "Which customer is this about?" (`load_crm`). Not done: asking a clarifying question when the problem itself is unclear, instead of routing it to the knowledge base.
+- **Ask what the problem is when a message is unclear.** Done for the customer: a message naming no customer is fine (a general question needs none); a named ID is checked first (`check_customer`), and troubleshooting with no customer yet replies "Which customer is this about?" (`load_crm`). Done for the request too: when Jev finds no path likely enough (under 0.5), the consultant is asked to rephrase ("unclear"); a prompt injection is refused, and an off-topic message gets a fixed reply. Not done: asking a *specific* clarifying question (which customer problem, which policy), instead of a generic rephrase.
