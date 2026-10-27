@@ -10,8 +10,6 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
 | Every pull request | GitHub Actions | `.github/workflows/ci.yml` | 2 jobs | runs in CI, no secrets; required before merging to `main` |
 | Data and graph | GitHub Actions | `.github/workflows/data-integrity.yml` | 1 job | runs in CI with a throwaway Neo4j, on data pull requests |
-| Production traffic | LangSmith online evaluators | `eval/online/` | 3 code checks + 7 Jev judges | runs in LangSmith on every real conversation |
-| Agent quality, before a change ships | offline eval (not a test suite) | `eval/offline/` | 81 golden examples, scored by code checks and Jev judges | run with `eval/offline/run.py`; see `eval/README.md`. Its own code is covered by the pytest tests below (Offline eval) |
 
 ## Running them
 
@@ -35,7 +33,7 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 
 ## pytest (`tests/`)
 
-Grouped by the part each file tests. **Offline eval** tests check the eval itself scores correctly (made-up replies, no model calls, except `e2e/judges/`); they don't score the agent: that's what an offline eval run does.
+Grouped by the part each file tests. The **eval code** tests check that the evaluation's own code scores correctly (made-up replies, no model calls, except `e2e/judges/`); they don't score the agent.
 
 | Part | File | Tests | Covers |
 |---|---|---|---|
@@ -49,12 +47,12 @@ Grouped by the part each file tests. **Offline eval** tests check the eval itsel
 | Data | `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
 | Web routes | `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
 | Slack bot | `slack_bot/` (8 files) | 76 | message parsing, Slack formatting, access control (members channel, fails closed), conversation threads, saved DM conversations, the `/agent` and DM handlers, Bolt wiring. All with fake Slack events: no network |
-| Offline eval | `eval/test_offline_walks.py` | 14 | the walks suite scores correctly: the oracle's right answers, the saved right answers still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
-| Offline eval | `eval/test_offline_routing.py` | 4 | the routing examples still match `build/routing.py`; every procedure pair has one message per side; general questions expect no procedure; a miss shows where the message went |
-| Offline eval | `eval/test_offline_kb.py` | 12 | the knowledge-base suite scores correctly: the saved questions, recall@5 and MRR from the citations, the Jev judges with a fake Jev (the questions asked, probabilities turned into scores, a failed call marked as an error), the gate's averages |
-| Offline eval | `eval/test_offline_behaviour.py` | 15 | the guards, conversations and adversarial suites score correctly: the saved examples still match their build scripts, the guard and per-turn conversation code checks, refused exactly when it's an injection, the conversation and adversarial Jev judges with a fake Jev |
-| Offline eval | `e2e/judges/` | 6 | the knowledge-base Jev judges with the **real** Jev: one good answer passes, five known-bad ones (wrong facts, vague, made-up amounts) are caught |
-| Online eval | `eval/test_online_code_evaluators.py` | 17 | the online code checks, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
+| Offline eval code | `eval/test_offline_walks.py` | 14 | the walks suite scores correctly: the oracle's right answers, the saved right answers still matching `data/`, 20 different customers, the checklist parser on the agent's real reply format, the gate (a crashed run asks for a rerun instead of counting as wrong) |
+| Offline eval code | `eval/test_offline_routing.py` | 4 | the routing examples still match `build/routing.py`; every procedure pair has one message per side; general questions expect no procedure; a miss shows where the message went |
+| Offline eval code | `eval/test_offline_kb.py` | 12 | the knowledge-base suite scores correctly: the saved questions, recall@5 and MRR from the citations, the Jev judges with a fake Jev (the questions asked, probabilities turned into scores, a failed call marked as an error), the gate's averages |
+| Offline eval code | `eval/test_offline_behaviour.py` | 15 | the guards, conversations and adversarial suites score correctly: the saved examples still match their build scripts, the guard and per-turn conversation code checks, refused exactly when it's an injection, the conversation and adversarial Jev judges with a fake Jev |
+| Offline eval code | `e2e/judges/` | 6 | the knowledge-base Jev judges with the **real** Jev: one good answer passes, five known-bad ones (wrong facts, vague, made-up amounts) are caught |
+| Online eval code | `eval/test_online_code_evaluators.py` | 17 | the online code checks, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
 | End-to-end | `e2e/troubleshooting/` | 6 | the full graph with real models: field, chain and ticket conditions |
 | End-to-end | `e2e/open_ended/` | 3 | knowledge-base questions, including the fee question an earlier classifier misrouted |
 | End-to-end | `e2e/follow_ups/` | 11 | `explain`, multi-customer conversations, conversations saved and resumed |
@@ -115,9 +113,9 @@ Two GitHub Actions workflows, both without secrets.
 
 Loading twice matters: a fresh, empty database can't have stale edges, so a single load would pass the audit whatever the loader does. Loading over existing data is what exercises the loader's stale-edge cleanup (`MERGE` alone only ever adds edges).
 
-## In production
+## Evaluation
 
-Testing doesn't stop at deployment. Every real conversation is scored in LangSmith: 3 code checks (citations exist, walk replies show their checklist, the customer rule held) and 7 Jev judges (made-up facts, contradictions, usefulness, retrieval relevance and knowledge gaps), with alerts to Slack and consultants' 👍 👎 on each answer.
+Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`.
 
 ## Bugs pinned by a test
 
@@ -134,5 +132,5 @@ Testing doesn't stop at deployment. Every real conversation is scored in LangSmi
 | Custom routes answering without the API key | `deploy/smoke.py` |
 | A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
 | One busy moment at Jev (529 Overloaded) or a dropped connection failing a consultant's message | `test_supervisor.py` (retried up to 3 times, 10 s timeout) |
-| "Why did you cite KB-006?" answered without the article (and the citation disowned) | `test_supervisor.py` (the agent reads it), the offline conversations suite |
+| "Why did you cite KB-006?" answered without the article (and the citation disowned) | `test_supervisor.py` (the agent reads it) |
 | A Jev outage counted as wrong answers in the offline eval | `eval/test_offline_walks.py` (errored runs ask for a rerun) |
