@@ -48,7 +48,7 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 | Agent                       | Python 3.12, LangGraph (plain `StateGraph` nodes), Anthropic Claude, TypeSafe Jev                                         |
 | Knowledge graph & retrieval | Neo4j (Aura in the cloud), native vector + full-text indexes, `neo4j-graphrag` `HybridCypherRetriever`, OpenAI embeddings |
 | Serving                     | LangGraph Server on LangSmith Deployment, custom Starlette routes                                                         |
-| Web                         | Next.js 16, React 19, `@langchain/react` (`useStream`), Tailwind 4                                                        |
+| Web | Next.js 16 (App Router), React 19, TypeScript, Node.js 24 (the route-handler proxy that streams to the agent), `@langchain/react` (`useStream`), Tailwind 4, on Vercel |
 | Slack                       | Slack Bolt, Socket Mode                                                                                                   |
 | Quality                     | LangSmith tracing, online evaluators and alerts; pytest, Vitest, Playwright; GitHub Actions data-integrity gate           |
 
