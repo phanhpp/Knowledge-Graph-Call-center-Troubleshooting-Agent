@@ -41,7 +41,8 @@ class SuperAgentState(MessagesState, total=False):
 
     # this turn
     crm_context: dict  # the customer's record, loaded by load_crm (troubleshooting only)
-    intent: Literal["troubleshooting", "open_ended", "explain"]  # the path classify_intent chose
+    # the path classify_intent chose; the last three end the turn with a fixed reply
+    intent: Literal["troubleshooting", "open_ended", "explain", "irrelevant", "unclear", "injection"]
     matched_procedure_id: Optional[str]  # which procedure to walk: set by match_procedure, else None
     error: Optional[str]  # set when a node fails, so the request stops with a message
 

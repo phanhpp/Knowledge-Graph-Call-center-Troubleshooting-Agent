@@ -17,10 +17,13 @@ The examples target the hard cases, by slice:
   - policy-twin: the same topic as a pair member, asked as a general question ("how much does a
     replacement SIM cost?"), which must go to the knowledge base, not the procedure.
   - general-with-customer: a general question that still names a customer.
+  - rule-vs-case: two "can I…?" questions. Bending a rule ("can I skip the security questions?")
+    has the same answer for every customer: knowledge base. Acting on this customer's case ("can
+    I give this customer a credit?") depends on their account: the procedure.
   - near-miss: a message that once went to the wrong procedure.
   - typo: misspelt messages, as typed in a hurry on a call.
   - no-procedure: a real problem that no procedure covers.
-  - off-topic: nothing to do with the customer or the knowledge base.
+  - off-topic: nothing to do with the job: the fixed "irrelevant" reply, no search.
 
 A troubleshooting message only reaches match_procedure when it names a customer, so each one has a
 customer whose CRM record fits the message (the "fits" note). Re-running overwrites routing.jsonl,
@@ -35,7 +38,7 @@ from mock_crm.crm_store import get_customer
 
 OUT = Path(__file__).resolve().parents[1] / "datasets" / "routing.jsonl"
 
-TROUBLESHOOTING, GENERAL = "troubleshooting", "open_ended"
+TROUBLESHOOTING, GENERAL, IRRELEVANT = "troubleshooting", "open_ended", "irrelevant"
 
 # (id, slice, pair, message, customer, path, procedure, what the example rests on)
 ROUTES = [
@@ -79,6 +82,10 @@ ROUTES = [
      None, GENERAL, None, "KB-013 Billing Dispute Resolution Timeline"),
     ("rollover-for-customer", "general-with-customer", None, "customer is asking how data rollover works, do unused GB carry over to next month?",
      "CUST-1029", GENERAL, None, "the answer is the same for any customer; KB-002 Data Rollover Policy"),
+    ("can-i-bend-a-rule", "rule-vs-case", "can-i", "can I skip the security questions for a caller who sounds genuine and is in a hurry?",
+     None, GENERAL, None, "bending a rule: the same answer for every customer (KB-016); once misrouted to troubleshooting"),
+    ("can-i-act-on-the-case", "rule-vs-case", "can-i", "can I give this customer a credit for last week's outage?",
+     "CUST-1044", TROUBLESHOOTING, "PROC-017", "depends on this customer's ticket and balance: PROC-017; active outage at their zip code"),
     # --- other hard cases ---
     ("login-no-reset-yet", "near-miss", None, "customer can't log in to their online account anymore and hasn't tried resetting the password",
      "CUST-1040", TROUBLESHOOTING, "PROC-018", "went to PROC-020 once: mentioning the reset, even to deny it, pulled it there"),
@@ -89,7 +96,9 @@ ROUTES = [
     ("voicemail", "no-procedure", None, "customer's voicemail stopped working yesterday, callers just hear a busy tone",
      "CUST-1055", TROUBLESHOOTING, None, "a real problem, but no procedure covers voicemail"),
     ("off-topic", "off-topic", None, "can you help me write an email to my team lead asking for Friday off?",
-     None, GENERAL, None, "not about a customer or the knowledge base"),
+     None, IRRELEVANT, None, "not about a customer or the knowledge base"),
+    ("off-topic-weather", "off-topic", None, "what's the weather going to be like in Sydney tomorrow?",
+     None, IRRELEVANT, None, "not about a customer or the knowledge base"),
 ]
 
 
