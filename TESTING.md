@@ -55,16 +55,22 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 
 ### The evaluators
 
-These test the evaluators, not the agent: given made-up replies, does each code check, Jev judge and the pass/fail gate score them right?
+These test the eval, not the agent, with no model calls (except 6 with the real Jev). The offline eval works in 4 steps, and each step has its own tests:
 
-| File | Tests | Covers |
-|---|---|---|
-| `eval/test_offline_walks.py` | 14 | walks: the right answers still match `data/`; the code checks and the gate score right |
-| `eval/test_offline_routing.py` | 4 | routing: the examples are valid |
-| `eval/test_offline_kb.py` | 12 | knowledge base: recall@5, MRR and the Jev judges score right (fake Jev) |
-| `eval/test_offline_behaviour.py` | 15 | guards, conversations, adversarial: the code checks and Jev judges score right (fake Jev) |
-| `eval/test_online_code_evaluators.py` | 17 | the online code checks score right |
-| `e2e/judges/` | 6 | with the real Jev: the knowledge-base judges pass a good answer and catch 5 bad ones |
+```
+1. Golden data    ──►  2. Code checks      ──►  3. Jev judges       ──►  4. The gate
+the right answers      score exact things       score what needs         compares the scores
+for 81 examples        (path, rules, MRR…)      reading (facts…)         with thresholds.yaml
+```
+
+| Step | Its tests check | If it were wrong | Key tests | Tests |
+|---|---|---|---|---|
+| 1. Golden data | the right answers are right (the oracle recomputes the walks from `data/`), and each dataset file is what its build script makes | a good agent fails, or a broken one passes | `test_walks_answer_key_still_matches_the_data`, `test_oracle_matches_the_known_roaming_walk`, `test_kb_file_is_what_its_build_script_makes` (one like it per dataset) | 16 |
+| 2. Code checks | each check passes a good reply, fails a bad one, and skips one it doesn't apply to | wrong scores, e.g. the right article at #2 scored 0 instead of 0.5 MRR | `test_recall_and_mrr_find_the_article_in_search_order`, `test_walk_evaluators`, `test_checklist_parser_reads_the_agents_real_reply_format` | 13 |
+| 3. Jev judges | each judge asks Jev the right questions about what the agent saw, and turns its probabilities into scores (fake Jev); the real Jev gets 6 answers with a known verdict right | a made-up fact passes, or a good answer fails | `test_answerable_questions_ask_about_each_fact_and_contradiction`, `test_unanswerable_questions_ask_whether_it_admits_the_gap`, `test_a_good_answer_passes` (real Jev) | 10, + 6 real |
+| 4. The gate | `run.py --gate` exits 1 below a pass mark, and asks for a rerun when runs errored | a quality drop passes, or an outage looks like one | `test_gate_fails_below_a_threshold_and_passes_at_it`, `test_gate_applies_as_a_rate_with_repetitions`, `test_gate_asks_for_a_rerun_when_runs_errored` | 6 |
+
+The files go by suite, not by step: `eval/test_offline_walks.py` (14), `eval/test_offline_routing.py` (4), `eval/test_offline_kb.py` (12), `eval/test_offline_behaviour.py` (15: guards, conversations, adversarial) and `e2e/judges/` (6, real Jev). The online eval's code checks have their own: `eval/test_online_code_evaluators.py` (17).
 
 ## Vitest (`web/lib/`)
 

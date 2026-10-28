@@ -116,7 +116,7 @@ metadata:  why this customer fits: "roaming off; open ticket: roaming still not 
 | --- | --- | --- |
 | **Code checks** | score the agent's reply with plain code, against the right answer: the path, procedure, action, rules, steps, article found… | every offline eval run |
 | **Jev judges** | score what needs reading: facts stated, made up, contradictions, usable | every offline eval run |
-| **Tests** (pytest, `tests/eval/test_offline_*.py`, 45) | make sure the eval itself scores correctly, with made-up replies and no model: the saved right answers still match `data/`; each code check, Jev judge and the gate pass a known-good reply and fail a known-bad one | every PR, in CI |
+| **Tests** (pytest, `tests/eval/test_offline_*.py`, 45) | make sure the eval itself is right: its right answers, code checks, Jev judges and gate ([TESTING.md](../TESTING.md)) | every PR, in CI |
 
 ### Pass marks (the gate)
 
