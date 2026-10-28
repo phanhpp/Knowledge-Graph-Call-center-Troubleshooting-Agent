@@ -11,7 +11,7 @@ dependencies = [
     "neo4j-graphrag[anthropic,openai]>=1.18.0",
     "langsmith",
     "slack-bolt>=1.21.0",
-    "langgraph-checkpoint-sqlite>=3.1.1",
+    "langgraph-checkpoint-sqlite>=3.1.2",
     "langchain-typesafe>=0.0.1a3",
     # The LangGraph server ships starlette, but agent/http_app.py and agent/routes/ import it
     # directly, so it is declared rather than relied on.
@@ -30,7 +30,7 @@ dev = ["pytest>=8.0", "langgraph-cli[inmem]", "langgraph-api"]
 # package. Packages are listed explicitly: one left out is simply missing from the deployed
 # image, and only the deploy finds out. The server needs these; slack_bot runs separately.
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
