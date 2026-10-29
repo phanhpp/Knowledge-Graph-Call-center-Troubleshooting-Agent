@@ -8,9 +8,12 @@ Flow of one turn:
            check_neo4j ---- Neo4j not reachable: reply "offline" ---> END
                 |
                 v
-          classify_intent (Jev, one call on the last 3 messages: which path, and is it a prompt injection?)
-                |  prompt injection, unclear or irrelevant:
-                |    fixed_reply (refuse / ask to rephrase / not my job) -> END
+          check_message (Jev, on the last 3 messages: a prompt injection? a follow-up?)
+                |  injection: fixed_reply (refuse) -> END
+                |  follow-up: rewrite_question (Claude: rewritten to stand on its own; every step after reads it)
+                v
+          classify_intent (Jev, on the last 3 messages: which path?)
+                |  unclear or irrelevant: fixed_reply (ask to rephrase / not my job) -> END
                 |
       +---------+------------------------------+------------------+
       v                                        v                  v
@@ -38,9 +41,10 @@ or a follow-up like "why?" about an earlier answer. `customer_id`
 is the current customer: the last one named. Without a checkpointer every call stands alone.
 
 Jev (TypeSafe, a classifier: typed answers with probabilities, no generated text) is called in
-classify_intent and match_procedure; it needs TYPESAFE_API_KEY. Claude is called in three places:
-explain_answer (a small agent with read-only look-up tools, agent/explain_tools.py), agent/ticket_interpreter.py (inside the walk, only for ticket_text conditions) and
-agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
+check_message, classify_intent and match_procedure; it needs TYPESAFE_API_KEY. Claude is called in four
+places: rewrite_question (only for a follow-up), explain_answer (a small agent with read-only look-up
+tools, agent/explain_tools.py), agent/ticket_interpreter.py (inside the walk, only for ticket_text
+conditions) and agent/graph_rag_chain.py (to write the answer). Everything else is plain code.
 """
 
 import logging
@@ -51,7 +55,7 @@ from typing import Literal, Optional
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from langchain_typesafe import Choice, Noul, NoulCriteria, TypeSafeClassifier
 from langchain_typesafe.client import (
@@ -62,12 +66,13 @@ from langchain_typesafe.client import (
 )
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
+from pydantic import BaseModel, Field
 
 from agent import explain_tools
 from agent.graph_rag_chain import graph_rag_chain
 from agent.procedural_executor import build_procedural_executor_graph, procedure_name
 from agent.state import SuperAgentState
-from agent.utils import reply
+from agent.utils import as_seen, reply
 from config import neo4j_unavailable_reason
 from etl.io_utils import load_json
 from mock_crm.crm_store import CustomerNotFoundError, get_customer
@@ -75,6 +80,7 @@ from mock_crm.crm_store import CustomerNotFoundError, get_customer
 logger = logging.getLogger(__name__)
 
 _EXPLAIN_MODEL = "claude-sonnet-5"
+_REWRITE_MODEL = "claude-sonnet-5"  # Haiku was measured too: it changed what 3 of 11 follow-ups asked
 
 NOTHING_TO_EXPLAIN = "There is nothing earlier in this conversation to explain yet. Ask your question first."
 
@@ -96,6 +102,7 @@ _EXPLAIN_HISTORY = 10  # how many recent messages (all customers) explain_answer
 # cautious on purpose, since walking the wrong procedure does more harm than a KB answer.
 _MIN_PROCEDURE_CONFIDENCE = 0.5  # below this, no procedure is walked
 _INJECTION_THRESHOLD = 0.5  # a prompt-injection probability at or above this, and the message is refused
+_FOLLOW_UP_THRESHOLD = 0.5  # a follow-up probability at or above this, and the message is rewritten first
 
 _NO_PROCEDURE = "none"
 
@@ -212,8 +219,8 @@ NEO4J_DOWN = (
 )
 
 
-def check_neo4j(state: SuperAgentState) -> Command[Literal["classify_intent", "__end__"]]:
-    """Stop the turn here if Neo4j is not reachable; otherwise go on to classify_intent.
+def check_neo4j(state: SuperAgentState) -> Command[Literal["check_message", "__end__"]]:
+    """Stop the turn here if Neo4j is not reachable; otherwise go on to check_message.
 
     Every path needs Neo4j (the procedure walk, the knowledge-base search, explain), so without it
     the turn would only fail later, after paying for the Jev calls, with a generic error. If Neo4j
@@ -224,28 +231,28 @@ def check_neo4j(state: SuperAgentState) -> Command[Literal["classify_intent", "_
     if reason:
         logger.error("Turn stopped: %s", reason)
         return Command(update={**reply(NEO4J_DOWN), "error": reason}, goto=END)
-    return Command(goto="classify_intent")
+    return Command(goto="check_message")
 
 
 def _latest_message(state: SuperAgentState):
-    """The consultant's new message: the last one in `messages` when a turn starts. match_procedure's
-    Jev call is given only this: the procedure is matched on what this message describes."""
-    return state["messages"][-1]
+    """The consultant's new message, as the agent reads it (as_seen: a follow-up's standalone rewrite).
+    match_procedure's Jev call is given only this: the procedure is matched on what it describes."""
+    return as_seen(state["messages"][-1])
 
 
-_CONTEXT_MESSAGES = 3  # classify_intent: the new message, after the question and answer before it
+_CONTEXT_MESSAGES = 3  # the routing Jev calls: the new message, after the question and answer before it
 
 
 def _recent_messages(state: SuperAgentState) -> list:
-    """What classify_intent's Jev call sees: the new message, after the previous question and answer
-    (just the new message on a first turn).
+    """What check_message, rewrite_question and classify_intent see: the new message, after the
+    previous question and answer (just the new message on a first turn), each as the agent reads it
+    (as_seen: an earlier follow-up's rewrite, once it has one).
 
-    A follow-up can't be classified alone: "how come?" asks about the last answer, and "and after the
-    first year?" is a general question only next to the cancellation-fee question before it. Measured,
-    the last answer alone wasn't enough for those ("and a refund?" became unclear). Three messages, not
-    the whole conversation: older turns, often about other customers, stay out of the call.
+    A follow-up can't be judged alone: "how come?" asks about the last answer, and "and after the
+    first year?" is a general question only next to the cancellation-fee question before it. Three
+    messages, not the whole conversation: older turns, often about other customers, stay out of the call.
     """
-    return state["messages"][-_CONTEXT_MESSAGES:]
+    return [as_seen(m) for m in state["messages"][-_CONTEXT_MESSAGES:]]
 
 
 # The path question classify_intent asks.
@@ -292,7 +299,7 @@ _PATH = Choice(
     },
 )
 
-# A Noul: the probability that the answer is yes. Asked in the same call as _PATH, so it costs nothing.
+# A Noul: the probability that the answer is yes. Asked first, in check_message, with _FOLLOW_UP.
 # It judges the latest message alone: otherwise an injection refused last turn stays in view, and the
 # clean message the refusal asks for is refused too (measured: 0.80, against 0.09 with this wording).
 _PROMPT_INJECTION = Noul(
@@ -317,52 +324,155 @@ _PROMPT_INJECTION = Noul(
 )
 
 
+# Asked with _PROMPT_INJECTION; yes sends the message to rewrite_question first. Measured on 18
+# messages after real answers, right on all 18: "and after the first year?" 0.95, "how much is a SIM
+# replacement?" after a roaming walk 0.06, "hmm ok so" 0.33 (vague, not a follow-up).
+_FOLLOW_UP = Noul(
+    instructions=(
+        "Does the consultant's latest message need the earlier messages to be understood? Earlier "
+        "messages, if any, are only context: judge the latest message."
+    ),
+    criteria=NoulCriteria(
+        true=(
+            "It refers to something said earlier and is incomplete without it: 'and for prepaid "
+            "customers?', 'what about the second step?', 'same for this customer', 'why?'."
+        ),
+        false=(
+            "It makes sense on its own, even on the same topic as earlier messages ('how do I cancel a "
+            "contract?'), or it refers to nothing at all ('ok thanks')."
+        ),
+    ),
+)
+
+
+def check_message(state: SuperAgentState) -> Command[Literal["fixed_reply", "rewrite_question", "classify_intent"]]:
+    """Screen the consultant's new message before routing it, with one Jev call asking two questions
+    about it: is it a prompt-injection attempt (_PROMPT_INJECTION), and does it need the earlier
+    messages to be understood (_FOLLOW_UP)?
+
+      - a likely injection (_INJECTION_THRESHOLD or more): refused by fixed_reply. Judged on what was
+        typed, before any rewrite: a rewrite could retell an attack as a clean request;
+      - a follow-up (_FOLLOW_UP_THRESHOLD or more, after an earlier message): rewrite_question first,
+        so every later step reads a message that stands on its own;
+      - otherwise straight to classify_intent.
+
+    Also clears matched_procedure_id: the state is saved between turns, and only match_procedure sets it.
+    """
+    response = _classifier().invoke({
+        "state": _recent_messages(state),
+        "questions": {"prompt_injection": _PROMPT_INJECTION, "follow_up": _FOLLOW_UP},
+    })
+    injection = response.nouls.get("prompt_injection")
+    follow_up = response.nouls.get("follow_up")
+    logger.debug(
+        "  Jev: prompt injection %s, follow-up %s",
+        round(injection.noul, 2) if injection is not None else None,
+        round(follow_up.noul, 2) if follow_up is not None else None,
+    )
+    update = {"matched_procedure_id": None}
+    if injection is not None and injection.noul >= _INJECTION_THRESHOLD:
+        logger.info("Intent: injection")
+        return Command(update={**update, "intent": "injection"}, goto="fixed_reply")
+    if follow_up is not None and follow_up.noul >= _FOLLOW_UP_THRESHOLD and len(state["messages"]) > 1:
+        return Command(update=update, goto="rewrite_question")
+    return Command(update=update, goto="classify_intent")
+
+
+class _Standalone(BaseModel):
+    """rewrite_question's answer: the rewritten message and nothing else. Asked for as plain text, the
+    model sometimes answered the question instead of rewriting it."""
+
+    message: str = Field(description=(
+        "The consultant's latest message, rewritten so it can be understood on its own. A question stays "
+        "a question: never answer it."
+    ))
+
+
+_REWRITE_INSTRUCTIONS = (
+    "Rewrite the consultant's latest message so it can be understood on its own: fill in only what it "
+    "refers to, keep it short, and add nothing else (no details or conclusions from the assistant's "
+    "answers). Keep who it is addressed to: 'how come?' about an answer becomes 'why did you ...?'. "
+    "If it is too vague, return it unchanged."
+)
+
+
+def _rewrite_model() -> Runnable:
+    """Claude for rewrite_question, answering as _Standalone. "nostream": LangGraph leaves its tokens out
+    of the message stream, so the rewrite never shows in the web app as if it were a reply."""
+    return ChatAnthropic(
+        model=_REWRITE_MODEL, max_tokens=300, thinking={"type": "disabled"}, tags=["nostream"],
+    ).with_structured_output(_Standalone)
+
+
+def rewrite_question(state: SuperAgentState) -> dict:
+    """Rewrite a follow-up so it stands on its own, from the question and answer before it: "and after
+    the first year?" after a cancellation-fee question becomes "Is there a fee to cancel a contract
+    after the first year?". Every later step reads the rewrite (agent/utils.py as_seen): the path
+    (classify_intent), the procedure (match_procedure), the knowledge-base search and answer, the
+    explain agent, and the next turn's routing.
+
+    The rewrite is stamped on the consultant's message (`additional_kwargs["standalone"]`), the way
+    load_crm stamps the customer ID: the text typed stays, so the web app and Slack show what was
+    written, and a trace shows both. If the call fails, nothing is stamped and the message is
+    answered as typed.
+
+    Measured on 11 follow-ups after real answers: with the typed text, "and after the first year?"
+    found KB-005 at #3 and "same problem for CUST-1002" matched no procedure; rewritten, KB-005 came
+    first and PROC-001 matched, and all 11 took the right path.
+    """
+    *earlier, latest = _recent_messages(state)
+    transcript = "\n".join(f"{'Consultant' if m.type == 'human' else 'Assistant'}: {m.content}" for m in earlier)
+    try:
+        rewritten = _rewrite_model().invoke([
+            SystemMessage(_REWRITE_INSTRUCTIONS),
+            HumanMessage(f"Earlier messages:\n{transcript}\n\nLatest message: {latest.content}"),
+        ]).message.strip()
+    except Exception:  # an outage or an unreadable answer: better answered as typed than not at all
+        logger.warning("Rewrite failed, so the message is answered as typed", exc_info=True)
+        return {}
+    logger.info("Rewritten: %s", rewritten)
+    message = state["messages"][-1]
+    stamped = {**message.additional_kwargs, "standalone": rewritten}
+    return {"messages": [message.model_copy(update={"additional_kwargs": stamped})]}
+
+
 def classify_intent(state: SuperAgentState) -> dict:
-    """Decide which path the consultant's latest message takes, with one Jev call asking two
-    questions: which path (_PATH), and is it a prompt-injection attempt (_PROMPT_INJECTION).
+    """Decide which path the consultant's new message takes, with one Jev call: which path (_PATH).
+    check_message has already refused injections and sent follow-ups to be rewritten.
 
     The path is judged on what the consultant wants done, not on the topic: most procedures have a KB
     article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is
     deliberately not shown here; seeing "Contract cancellation request" is what made the old
     classifier send a fee question to that procedure. match_procedure picks the procedure later.
 
-    Jev sees the last 3 messages (_recent_messages), and both questions are about the latest one.
+    Jev sees the last 3 messages as the agent reads them (_recent_messages): the new one rewritten
+    if it was a follow-up. The earlier two still help with a follow-up check_message missed.
 
     Decided in this order:
-      1. a likely prompt injection (_INJECTION_THRESHOLD or more): "injection", refused;
-      2. "unclear" (too vague to tell what is wanted): asked to rephrase. Making the request clear is
+      1. "unclear" (too vague to tell what is wanted): asked to rephrase. Making the request clear is
          the consultant's job, not the agent's;
-      3. "irrelevant": a fixed reply;
-      4. "explain" on a first message: nothing to explain yet, so "open_ended";
-      5. otherwise the path Jev chose.
-    Cases 1-3 end the turn with fixed_reply: no search, no Claude call.
+      2. "irrelevant": a fixed reply;
+      3. "explain" on a first message: nothing to explain yet, so "open_ended";
+      4. otherwise the path Jev chose.
+    Cases 1-2 end the turn with fixed_reply: no search, no Claude call.
 
-    Returns {"intent": ..., "matched_procedure_id": None}. The id is cleared every turn (the state is
-    saved between turns), and only match_procedure sets it.
+    Returns {"intent": ...}.
     """
-    response = _classifier().invoke({
-        "state": _recent_messages(state),
-        "questions": {"path": _PATH, "prompt_injection": _PROMPT_INJECTION},
-    })
+    response = _classifier().invoke({"state": _recent_messages(state), "questions": {"path": _PATH}})
     path = response.choices["path"]  # e.g. path.choice = "troubleshooting"
-    injection = response.nouls.get("prompt_injection")
-    if injection is not None and injection.noul >= _INJECTION_THRESHOLD:
-        intent = "injection"
-    elif path.choice == "explain" and len(state["messages"]) < 2:
+    if path.choice == "explain" and len(state["messages"]) < 2:
         intent = "open_ended"  # a first message: nothing earlier to explain
     else:
         intent = path.choice  # including "unclear" and "irrelevant"
     logger.info("Intent: %s", intent)
-    logger.debug(
-        "  Jev: path=%s, probabilities %s, prompt injection %s",
-        path.choice, {label: round(p, 2) for label, p in path.probabilities.items()},
-        round(injection.noul, 2) if injection is not None else None,
-    )
-    return {"intent": intent, "matched_procedure_id": None}
+    logger.debug("  Jev: path=%s, probabilities %s", path.choice,
+                 {label: round(p, 2) for label, p in path.probabilities.items()})
+    return {"intent": intent}
 
 
 def fixed_reply(state: SuperAgentState) -> dict:
-    """The reply for a message the agent won't act on (classify_intent cases 1-3): no search, no Claude."""
+    """The reply for a message the agent won't act on (an injection, from check_message; unclear or
+    irrelevant, from classify_intent): no search, no Claude."""
     return reply({"injection": INJECTION_REPLY, "unclear": UNCLEAR, "irrelevant": IRRELEVANT}[state["intent"]])
 
 
@@ -448,6 +558,7 @@ def _explain_history(messages: list, limit: int) -> list:
     labelled = []
     customer = None
     for message in window:
+        message = as_seen(message)  # a follow-up's standalone rewrite, if it has one
         text = _without_label(message.content)
         if message.type == "human":
             customer = message.additional_kwargs.get("customer_id")
@@ -545,6 +656,8 @@ def build_supervisor_graph(checkpointer=None):
     builder = StateGraph(SuperAgentState)
     builder.add_node("check_customer", check_customer)  # routes itself (returns a Command)
     builder.add_node("check_neo4j", check_neo4j)  # routes itself
+    builder.add_node("check_message", check_message)  # routes itself
+    builder.add_node("rewrite_question", rewrite_question)
     builder.add_node("classify_intent", classify_intent)
     builder.add_node("load_crm", load_crm)  # routes itself
     builder.add_node("match_procedure", match_procedure)
@@ -554,6 +667,7 @@ def build_supervisor_graph(checkpointer=None):
     builder.add_node("fixed_reply", fixed_reply)
 
     builder.add_edge(START, "check_customer")
+    builder.add_edge("rewrite_question", "classify_intent")
     builder.add_conditional_edges(
         "classify_intent",
         route,

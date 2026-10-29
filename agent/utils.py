@@ -7,13 +7,14 @@ and the run that produced it (for 👍👎 feedback). These functions are the on
 those formats:
 
     consultant_message(text, customer_id)  used by callers (the Slack bot, tests) to send a message
+    as_seen(message)                       what the agent reads: a follow-up's standalone rewrite
     reply(text, citations)                 used by graph nodes to put the answer into state
     reply_of(state)                        used outside the graph to get the answer back out
 """
 
 from typing import Optional
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langsmith.run_helpers import get_current_run_tree
 
 from agent.data_model import Reply
@@ -26,6 +27,15 @@ def consultant_message(text: str, customer_id: Optional[str] = None) -> HumanMes
     The graph checks a named ID exists (check_customer) and makes it the current customer.
     """
     return HumanMessage(text, additional_kwargs={"customer_id": customer_id} if customer_id else {})
+
+
+def as_seen(message: BaseMessage) -> BaseMessage:
+    """The message as the agent reads it. A follow-up that needs the earlier messages to make sense
+    ("and after the first year?") carries a standalone rewrite in `additional_kwargs["standalone"]`
+    (agent/supervisor.py rewrite_question); every step reads that instead of the text typed. The text
+    typed stays the message's content, which the web app and Slack show."""
+    standalone = message.additional_kwargs.get("standalone")
+    return message.model_copy(update={"content": standalone}) if standalone else message
 
 
 def reply(text: str, citations: list[str] | None = None, looked_up: list[str] | None = None) -> dict:

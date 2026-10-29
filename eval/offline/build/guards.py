@@ -8,8 +8,8 @@ load_crm). So each example gives the message as the graph receives it:
   - unknown ID:        a well-formed ID with no CRM record. Stopped before any model call;
   - malformed ID:      "CUST-12", which the Slack bot's pattern (CUST- and digits) accepts and stamps.
                        Same stop: the web app rejects it before sending;
-  - no customer:       a troubleshooting message naming none. Jev classifies it (one call), then
-                       the agent asks which customer, before walking anything or calling Claude;
+  - no customer:       a troubleshooting message naming none. Jev screens and classifies it (two
+                       calls), then the agent asks which customer, before walking anything or calling Claude;
   - two IDs:           the Slack bot stamps the first ID and leaves the second in the text. The walk
                        must use the first customer's record: the oracle's steps for that customer
                        differ from the other one's, so the checklist shows whose record was read.
@@ -51,7 +51,7 @@ def build() -> list[dict]:
         stopped("malformed-id", "customer cannot activate roaming", "CUST-12",
                 UNKNOWN_CUSTOMER.format(customer_id="CUST-12"), "No CRM record found", None, max_jev_calls=0),
         stopped("no-customer", "customer cannot get roaming to switch on before their trip", None,
-                WHICH_CUSTOMER, "No customer named", "troubleshooting", max_jev_calls=1),
+                WHICH_CUSTOMER, "No customer named", "troubleshooting", max_jev_calls=2),
         {
             "id": "guard-two-ids",
             "inputs": {"message": f"customer cannot activate roaming, same problem as {second} last week", "customer_id": first},

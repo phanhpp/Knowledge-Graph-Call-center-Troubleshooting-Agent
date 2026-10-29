@@ -2,7 +2,8 @@
 
 Flow of one graph_rag_chain() call:
 
-    the consultant's latest message (the query text; earlier messages are not used)
+    the consultant's latest message, as the agent reads it (a follow-up like "and after the first
+    year?" arrives already rewritten to stand on its own: agent/supervisor.py rewrite_question)
       |
       1. embed the query                       OpenAI text-embedding-3-small (1536 numbers)
       |
@@ -11,6 +12,7 @@ Flow of one graph_rag_chain() call:
       |                                              finds articles close in meaning to the query
       |                                          - fulltext index kb_article_fulltext
       |                                              finds articles that share words with the query
+      |                                              (sent an escaped copy: _fulltext_query)
       |                                        Each search's scores are divided by its own best
       |                                        score (its best hit becomes 1.0), the two lists are
       |                                        merged, an article found by both keeps its higher
@@ -47,6 +49,7 @@ agent/supervisor.py imports this module unconditionally, so building them at imp
 caller with an OpenAIError whenever OPENAI_API_KEY was unset.
 """
 
+import re
 from functools import lru_cache
 
 import neo4j
@@ -59,7 +62,7 @@ from langsmith import traceable
 from langsmith.wrappers import wrap_anthropic
 
 from agent.state import SuperAgentState
-from agent.utils import reply
+from agent.utils import as_seen, reply
 from config import get_driver
 
 # Appended by neo4j-graphrag after the hybrid search; `node` is one matched Article and `score`
@@ -75,6 +78,16 @@ RETURN node.title AS title,
 """
 
 _MAX_ANSWER_TOKENS = 1024
+
+# Characters the full-text index reads as Lucene query syntax: field:value, (groups), "phrases", wild*cards…
+_LUCENE_SYNTAX = re.compile(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)')
+
+
+def _fulltext_query(text: str) -> str:
+    """The question as the full-text index should read it: special characters escaped, and lower-cased
+    so AND / OR / NOT stay words, not operators (the index lower-cases words anyway). Sent as typed, a
+    question with a colon ("Policy question: can I…?") failed the whole search."""
+    return _LUCENE_SYNTAX.sub(r"\\\1", text.lower())
 
 
 def _format_article(record: neo4j.Record) -> RetrieverResultItem:
@@ -116,8 +129,15 @@ def _get_rag() -> GraphRAG:
         embedder=OpenAIEmbeddings(model="text-embedding-3-small"),
         result_formatter=_format_article,
     )
+    search = retriever.search
+
+    def search_safely(query_text: str, **kwargs) -> RetrieverResult:
+        """The vector search embeds the question as written; the full-text index gets an escaped copy."""
+        query_vector = retriever.embedder.embed_query(query_text)
+        return search(query_text=_fulltext_query(query_text), query_vector=query_vector, **kwargs)
+
     retriever.search = traceable(name="kb_search", run_type="retriever", process_outputs=_as_documents)(
-        retriever.search
+        search_safely
     )
     # thinking disabled: neo4j-graphrag only accepts a reply whose first block is text, and this
     # model sometimes opens with a thinking block, which made the call fail.
@@ -132,15 +152,15 @@ def _get_rag() -> GraphRAG:
 def graph_rag_chain(state: SuperAgentState) -> dict:
     """Search the KB articles, then have Claude answer from them.
 
-    The query text is the latest message in state["messages"]. The earlier messages are not passed
-    to the search, so it sees the question exactly as typed.
+    The query text is the latest message in state["messages"], as the agent reads it (as_seen): a
+    follow-up's standalone rewrite, else the text typed. The earlier messages are not passed.
 
     Returns the reply (see agent/utils.py reply()). Its citations are each retrieved article's ID
     followed by the IDs of the rules it cites (a rule shared by several articles is listed once).
     This covers all 5 retrieved articles, not only the ones Claude relied on.
     """
     response = _get_rag().search(
-        query_text=str(state["messages"][-1].content),
+        query_text=str(as_seen(state["messages"][-1]).content),
         retriever_config={"top_k": 5},
         return_context=True,
     )

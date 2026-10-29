@@ -18,6 +18,10 @@ from the customer's CRM record) or from a cited rule's wording (data/rules.json)
                        naming the customer again (the current customer must carry over)
   short-follow-ups     a walk, then "how come?" (only clear next to the answer before it), then
                        "hmm ok so" (unclear: asked to rephrase)
+  kb-depends-on-earlier  a fee question, then "and after the first year?": rewritten to stand on its
+                       own before the knowledge base is searched
+  walk-same-problem    a roaming walk, then "same problem for CUST-1002": rewritten, so the roaming
+                       procedure is matched for the new customer
 
 Re-running overwrites conversations.jsonl, so edit this script, not the file.
 """
@@ -113,6 +117,20 @@ CONVERSATIONS = {
         ]),
         ({"text": "hmm ok so", "customer_id": None},
          {"path": "unclear", "procedure_id": None, "customer_after": "CUST-1002"}),
+    ],
+    # KB-005: the fee decreases each month and reaches zero only at the end of the 24-month term
+    "kb-depends-on-earlier": [
+        general("Is there a fee to cancel a contract in the first year?"),
+        general("and after the first year?", facts=[
+            "cancelling after the first year can still carry an early termination fee",
+            "the fee keeps decreasing each month and reaches zero only at the end of the 24-month term",
+        ]),
+    ],
+    # CUST-1001 escalates (all no); CUST-1002 has roaming off (step 1 yes: enable roaming). The caller
+    # stamps CUST-1002 on the message, as the web app and the Slack bot do with an ID in the text.
+    "walk-same-problem": [
+        walk("customer cannot activate roaming", "CUST-1001", "PROC-001"),
+        walk("same problem for CUST-1002", "CUST-1002", "PROC-001"),
     ],
 }
 
