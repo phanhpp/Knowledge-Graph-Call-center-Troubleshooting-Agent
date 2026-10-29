@@ -32,6 +32,11 @@ on:
       - "mock_crm/**"
       - ".github/workflows/data-integrity.yml"
 
+# The GITHUB_TOKEN can only read the repository: no job here pushes, comments or edits anything
+# (artifact uploads and caches use their own token), so a compromised step couldn't either.
+permissions:
+  contents: read
+
 jobs:
   validate-and-audit:
     runs-on: ubuntu-latest

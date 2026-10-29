@@ -17,6 +17,11 @@ on:
   push:
     branches: [main]
 
+# The GITHUB_TOKEN can only read the repository: no job here pushes, comments or edits anything
+# (artifact uploads and caches use their own token), so a compromised step couldn't either.
+permissions:
+  contents: read
+
 # A newer push to the same branch makes an older run pointless.
 concurrency:
   group: ci-${{ github.ref }}

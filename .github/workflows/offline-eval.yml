@@ -27,6 +27,11 @@ on:
       - ".github/workflows/offline-eval.yml"
       - "!**/*.md" # docs alone never run the eval
 
+# The GITHUB_TOKEN can only read the repository: no job here pushes, comments or edits anything
+# (artifact uploads and caches use their own token), so a compromised step couldn't either.
+permissions:
+  contents: read
+
 # A newer push to the same pull request makes an older run pointless (and it costs money).
 concurrency:
   group: offline-eval-${{ github.ref }}

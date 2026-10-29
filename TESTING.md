@@ -6,7 +6,7 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 |---|---|---|---|---|
 | Agent, data, Slack bot | pytest | the rest of `tests/` | 259 (234 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
 | The evaluators | pytest | `tests/eval/`, `tests/e2e/judges/` | 68 (62 fast + 6 end-to-end) | nothing; the end-to-end ones a Jev key |
-| Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
+| Web app logic | Vitest | `web/lib/*.test.ts` | 47 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
 | Every pull request | GitHub Actions | `.github/workflows/ci.yml` | 2 jobs | runs in CI, no secrets; required before merging to `main` |
@@ -79,6 +79,7 @@ Each file sits next to the code it tests; no browser and no agent server (jsdom,
 | File | Tests | Covers |
 |---|---|---|
 | `auth.test.ts` | 6 | the password gate: the right password passes; a wrong or forged cookie fails; the cookie never contains the password; no password configured lets nobody in |
+| `safe-next.test.ts` | 7 | after signing in: back to the page you came from, never to another site (`//`, `/\`, a tab, another origin, `javascript:`) |
 | `message.test.ts` | 9 | the message sent to the agent (customer ID in `additional_kwargs`, cleaned up); reading citations, sources and run ids; the saved state winning over a streamed reply |
 | `use-feedback.test.ts` | 10 | 👍 👎: the vote posted with the right run id; marked sent or failed; read back after a reload; an in-flight vote never overwritten |
 | `panel-size.test.ts` | 7 | panel sizes: kept within limits, saved and restored, safe when browser storage is blocked |
@@ -142,6 +143,7 @@ Evaluation is separate from testing: the offline eval scores the agent on golden
 | A 👍 filed on the wrong run | `test_sources.py` (the run id is the root run) |
 | Live replies missing their citations, sources and run id | `message.test.ts`, `chat.spec.ts` |
 | An unreachable agent leaving the page on "Working on it…" | `errors.spec.ts` |
+| Signing in sending you to another site (`/login?next=/\evil.com`) | `safe-next.test.ts` |
 | A vote overwritten while still being sent | `use-feedback.test.ts` |
 | Custom routes answering without the API key | `deploy/smoke.py` |
 | A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
