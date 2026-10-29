@@ -122,6 +122,33 @@ metadata:  why this customer fits: "roaming off; open ticket: roaming still not 
 
 The pass marks are in `offline/thresholds.yaml`. With `--gate`, `run.py` exits 1 if a check scores below its pass mark, or if a run crashed (listed as errored: rerun it, since an outage isn't a quality drop).
 
+`gate()` reads the summary every run saves to `results/<suite>-<tag>.json`. A real one (conversations, 3 runs; most checks and slices left out):
+
+```json
+{
+  "suite": "conversations",
+  "tag": "rewrite-after",
+  "experiment": "conversations-rewrite-after-2f8281f2",
+  "examples": 9,
+  "repetitions": 3,
+  "checks": {
+    "turn_paths_correct": {"passed": 27, "total": 27, "mean": 1.0, "fractional": true},
+    "facts_covered": {"passed": 23, "total": 24, "mean": 0.979, "fractional": true},
+    "supported": {"passed": 17, "total": 18, "mean": 0.944},
+    "right_customer": {"passed": 3, "total": 3, "mean": 1.0}
+  },
+  "failures": {"supported": ["conv-one-customer"], "facts_covered": ["conv-kb-depends-on-earlier"]},
+  "errored": {},
+  "missed": {"conv-kb-depends-on-earlier": "facts_covered", "conv-one-customer": "supported"},
+  "slices": {"walk-why": {"passed": 3, "total": 3}, "one-customer": {"passed": 2, "total": 3}},
+  "latency_s": {"p50": 7.67, "p95": 16.35}
+}
+```
+
+- **`checks`:** per check, `passed` out of `total`: the examples it applies to × the runs (6 conversations with an explanation × 3 = 18). `mean` is the average score; `fractional` marks a 0–1 score (e.g. the share of a conversation's turns routed right), which passes only at 1.
+- **`failures`, `missed`:** which examples failed which checks; **`errored`:** runs that crashed, not scored; **`slices`:** examples that passed every check, per group.
+- **The gate** compares each check with `thresholds.yaml` as a rate: `supported` 17/18 against a pass mark of 5 (of 6) passes; `facts_covered` uses its `mean` (0.979 against 0.8).
+
 Each suite below shows **today's result**: what the current agent scores when the suite runs 3 times. The pass marks are set from it:
 
 - **Most checks allow one miss** below today's result, because model answers vary a little. Routing: 32 of 33 must go to the right place.
@@ -144,7 +171,7 @@ The exact numbers are in `thresholds.yaml`. They're not the 0.5 lines inside a J
 ### CI
 
 - **Every PR:** CI's `agent` job runs the tests (`pytest -m "not e2e"`, which includes `tests/eval`): seconds, no keys.
-- **The offline eval itself** (`.github/workflows/offline-eval.yml`): with `--gate`, on PRs that change `agent/`, `data/` or `eval/`, every Monday, and on demand (Actions → Offline eval → Run workflow). A throwaway Neo4j loaded from `data/` (no Aura credentials in GitHub), and 4 repository secrets (Anthropic, OpenAI, TypeSafe, LangSmith). Conversations run 3 times, since an explanation sometimes adds a guess; the other suites once. Each suite's table goes into the run's summary. A failing gate fails the job; a run that errored (an outage) asks for a rerun. Not a required check, since it costs money and depends on outside services.
+- **The offline eval itself** (`.github/workflows/offline-eval.yml`): with `--gate`, only on PRs that change `agent/`, `data/`, `mock_crm/`, `etl/`, `config.py` or `eval/` (a failed run is rerun from the PR's checks). A throwaway Neo4j loaded from `data/` (no Aura credentials in GitHub), and 4 repository secrets (Anthropic, OpenAI, TypeSafe, LangSmith). The throwaway database is cheap: starting it and loading the graph takes under a minute, and embedding the 25 articles is about 8,300 tokens (roughly $0.0002). The eval's Claude and Jev calls cost about a hundred times more. Aura holds `main`'s data, so a pull request that changes `data/` couldn't be scored on its own data there without loading it into production. Conversations run 3 times, since an explanation sometimes adds a guess; the other suites once. Each suite's table goes into the run's summary. A failing gate fails the job; a run that errored (an outage) asks for a rerun. Not a required check, since it costs money and depends on outside services.
 
 ### Commands
 

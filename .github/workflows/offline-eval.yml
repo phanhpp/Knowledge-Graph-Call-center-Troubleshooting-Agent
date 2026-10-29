@@ -2,8 +2,12 @@
 # and Jev judges (see eval/README.md). It makes real model calls, so it needs 4 secrets and costs a
 # little each run. Not a required check: a Jev or Anthropic outage means "rerun", not "fix the code".
 #
-#   when     pull requests that change the agent, the data or the eval; every Monday; on demand
-#   database a throwaway Neo4j, loaded from data/ (no Aura credentials in GitHub)
+#   when     only pull requests that change what the agent does or how it's scored: the agent, its
+#            data, the mock CRM, the loaders, its config, the eval. Not on dependency-only pull requests
+#            (Dependabot's get no secrets). A failed run is rerun from the pull request's checks
+#   database a throwaway Neo4j, loaded from data/: a pull request's own data, never production's, and no
+#            Aura credentials in GitHub. Under a minute to start and load; embedding the 25 articles
+#            is about 8,300 tokens (~$0.0002). The eval's model calls cost about 100x more.
 #   runs     every suite with --gate; conversations 3 times (an explanation sometimes adds a guess)
 #   output   each suite's results table in the run's summary; the results files as an artifact
 
@@ -14,11 +18,11 @@ on:
     paths:
       - "agent/**"
       - "data/**"
+      - "mock_crm/**"
+      - "etl/**"
+      - "config.py"
       - "eval/**"
       - ".github/workflows/offline-eval.yml"
-  schedule:
-    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
-  workflow_dispatch:
 
 # A newer push to the same pull request makes an older run pointless (and it costs money).
 concurrency:

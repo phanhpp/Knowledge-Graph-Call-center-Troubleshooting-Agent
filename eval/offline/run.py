@@ -3,16 +3,62 @@
     uv run python -m eval.offline.run --suite walks --tag baseline
     uv run python -m eval.offline.run --suite all --gate     # fail if a score is below thresholds.yaml
 
-For each suite it:
-  1. uploads datasets/<suite>.jsonl to the LangSmith dataset `super-agent-offline-<suite>`. An
-     example keeps the same LangSmith ID every time (made from its golden ID), so editing it in the
-     file updates it in LangSmith, and deleting it from the file deletes it there too;
-  2. runs every example through the agent (target.py) and scores it with the suite's code checks
-     (evaluators/code.py) and Jev judges (evaluators/jev.py), saved as a LangSmith experiment named
-     `<suite>-<tag>`: open two experiments side by side to compare versions;
-  3. prints how many examples passed each check, which failed and where they went instead, how each
-     slice did (e.g. routing's "typo" examples), and the latency, and saves the same to
-     results/<suite>-<tag>.json. With --gate, it exits with an error if a check is below its threshold.
+For each suite (--suite all runs them in turn):
+
+                 ┌─────────────────────────────────────────┐
+                 │      datasets/<suite>.jsonl             │
+                 │   (the golden examples)                 │
+                 └────────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                 ┌─────────────────────────────────────────┐
+                 │          sync_dataset()                 │
+                 │ Syncs examples with LangSmith Dataset   │
+                 └────────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                 ┌─────────────────────────────────────────┐
+                 │             run_suite()                 │
+                 │   Calls target.py (the agent), scored   │
+                 │   by code checks and Jev judges         │
+                 └────────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                 ┌─────────────────────────────────────────┐
+                 │           Save Local Summary            │
+                 │  Writes eval/offline/results/*.json     │
+                 └────────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                 ┌─────────────────────────────────────────┐
+                 │            print_summary()              │
+                 │    Prints results table to console      │
+                 └────────────────────┬────────────────────┘
+                                      │
+                      ┌───────────────┴───────────────┐
+                      │ Is --gate flag passed?        │
+                      └───────┬───────────────┬───────┘
+                              │               │
+                     NO       │               │ YES
+                     ▼                        ▼
+              ┌──────────────┐      ┌──────────────────┐
+              │ Exit Cleanly │      │   gate() Check   │
+              └──────────────┘      └────────┬─────────┘
+                                             │
+                                ┌────────────┴────────────┐
+                                ▼                         ▼
+                        [ Scores Pass ]           [ Below thresholds.yaml,
+                                │                   or a run errored ]
+                                ▼                         ▼
+                         ✅ Exit Code 0            ❌ Exit Code 1
+
+  - sync_dataset: an example keeps the same LangSmith ID every time (made from its golden ID), so
+    editing it in the file updates it in LangSmith, and deleting it from the file deletes it there too.
+  - run_suite: the code checks are in evaluators/code.py, the Jev judges in evaluators/jev.py. The
+    LangSmith experiment is named `<suite>-<tag>`: open two side by side to compare versions. The
+    summary counts how many examples passed each check, which failed and where they went instead,
+    how each slice did (e.g. routing's "typo" examples), and the latency.
+  - gate: each check against its pass mark in thresholds.yaml. CI runs the same, with --gate.
 
 If a run crashes (e.g. a model API returns 529 Overloaded), there is no reply to score; if a judge
 crashes, there is no score. Both are listed as "errored", not counted as wrong answers: an outage is

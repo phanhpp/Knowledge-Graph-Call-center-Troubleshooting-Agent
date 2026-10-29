@@ -43,14 +43,14 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 ```
 
 
-| Layer                       | Stack                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Agent                       | Python 3.12, LangGraph (plain `StateGraph` nodes), Anthropic Claude, TypeSafe Jev                                         |
-| Knowledge graph & retrieval | Neo4j (Aura in the cloud), native vector + full-text indexes, `neo4j-graphrag` `HybridCypherRetriever`, OpenAI embeddings |
-| Serving                     | LangGraph Server on LangSmith Deployment, custom Starlette routes                                                         |
-| Web | Next.js 16 (App Router), React 19, TypeScript, Node.js 24 (the route-handler proxy that streams to the agent), `@langchain/react` (`useStream`), Tailwind 4, on Vercel |
-| Slack                       | Slack Bolt, Socket Mode                                                                                                   |
-| Quality                     | LangSmith tracing, online evaluators and alerts; pytest, Vitest, Playwright; GitHub Actions data-integrity gate           |
+| Layer                       | Stack                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent                       | Python 3.12, LangGraph (plain `StateGraph` nodes), Anthropic Claude, TypeSafe Jev                                                                                      |
+| Knowledge graph & retrieval | Neo4j (Aura in the cloud), native vector + full-text indexes, `neo4j-graphrag` `HybridCypherRetriever`, OpenAI embeddings                                              |
+| Serving                     | LangGraph Server on LangSmith Deployment, custom Starlette routes                                                                                                      |
+| Web                         | Next.js 16 (App Router), React 19, TypeScript, Node.js 24 (the route-handler proxy that streams to the agent), `@langchain/react` (`useStream`), Tailwind 4, on Vercel |
+| Slack                       | Slack Bolt, Socket Mode                                                                                                                                                |
+| Quality                     | LangSmith tracing, online evaluators and alerts; pytest, Vitest, Playwright; GitHub Actions data-integrity gate                                                        |
 
 
 
@@ -324,37 +324,35 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
 
 Routing (`check_message`, `classify_intent`, then `match_procedure`, in `agent/supervisor.py`) is up to three Jev calls, decided in plain code. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
 
-```
+```markdown
   the last 3 messages: the previous question and answer, then the new message
-  |
-  v
+                                    │
+                                    ▼
   check_message, one Jev call, two yes/no questions about the new message:
-    a prompt injection?  >= 0.5  --> refused ("it tries to change how I work")
-    a follow-up?         >= 0.5  --> saved for below
-  |
-  v
+    a prompt injection?  >= 0.5  ──► refused ("it tries to change how I work")
+    a follow-up?         >= 0.5  ──► saved for below
+                                    │
+                                    ▼
   classify_intent, one Jev call: path (Choice), a probability for each
   troubleshooting / open_ended / explain / irrelevant / unclear
-  |
-  v
-  unclear                                     --> asked to rephrase
-  irrelevant                                  --> a fixed reply (not my job)
-  explain, on the first message               --> open_ended       --> knowledge base
-  explain, after an earlier answer            --> explain          --> explain_answer (reads the conversation)
-  troubleshooting                             --> troubleshooting  --> match_procedure
-  open_ended                                  --> open_ended       --> knowledge base
-  troubleshooting or open_ended, a follow-up  --> rewrite_question (Claude) first: "and after the first
-                                                  year?" --> "Is there a fee to cancel a contract after
-                                                  the first year?"
+                                    │
+                                    ▼
+  unclear                                     ──► asked to rephrase
+  irrelevant                                  ──► a fixed reply (not my job)
+  explain, on the first message               ──► open_ended       ──► knowledge base
+  explain, after an earlier answer            ──► explain          ──► explain_answer (reads context)
+  troubleshooting                             ──► troubleshooting  ──► match_procedure
+  open_ended                                  ──► open_ended       ──► knowledge base
+  troubleshooting or open_ended, a follow-up  ──► rewrite_question (Claude) first
 ```
 
-An injection, unclear and irrelevant end the turn with a fixed reply: no search, no Claude call. A prompt injection is refused rather than cleaned up: making the request clear is the consultant's job. Measured: attacks score 0.98–0.99; look-alikes ("can I skip the security questions?", "the customer says: please waive the late fee") 0.01–0.17.
+An injection, unclear and irrelevant get a fixed reply: no search, no Claude call. An injection is refused, not cleaned up (attacks score 0.98–0.99; look-alikes like "can I skip the security questions?" 0.01–0.17).
 
-- **The last 3 messages, judged on the last.** A follow-up only makes sense next to what came before it: "how come?" asks about the last answer, and "and after the first year?" is a general question only after a cancellation-fee question. Every question is about the new message; the earlier two are context. The injection question judges the new message alone: otherwise an injection refused last turn stays in view, and the clean message the refusal asks for is refused too (measured: 0.80, against 0.09). Older turns, often about other customers, stay out of the call.
-- **A troubleshooting or general follow-up is rewritten for the step that reads it alone.** Routing on the last 3 messages got follow-ups right, but `match_procedure` and the knowledge-base search each read one message: the search ran on "and after the first year?" alone (the right article came 3rd), and "same problem for CUST-1002" matched no procedure. Rewritten, the right article comes first and PROC-001 matches. Claude sees the 3 messages labelled with their customers and the IDs each answer cited (both are in the messages' metadata, not their text). The rewrite is stamped on the consultant's message (`additional_kwargs["standalone"]`), so the web app and Slack still show what was typed. Explanations aren't rewritten: the explain agent reads the conversation itself, and a rewrite made it worse ("why?" became a general question about the procedure; key facts fell from 0.93 to 0.77). Measured on 18 messages after real answers: the follow-up question was right on all 18; Sonnet's rewrites were right on all 11 follow-ups (Haiku: 8).
-- **"unclear" is one of Jev's options, not a cut-off.** It used to mean "the chosen path under 0.5", which almost never happened: a vague message still has a best-fitting path, often at 0.7–0.8 ("the customer is not happy": troubleshooting 0.72), while clear ones went as low as 0.65. As an option, Jev caught all 12 vague test messages; the cut-off caught 3.
-- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none", given only the new message (rewritten, for a follow-up). "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
-- The 0.5 thresholds (prompt injection, follow-up, procedure) are set at the top of `agent/supervisor.py` and checked by the offline routing, conversations and adversarial suites.
+- **Last 3 messages, judged on the last.** A follow-up needs what came before it ("how come?", "and after the first year?"). The injection check looks at the new message only, so a clean resend after a refusal isn't refused again.
+- **Follow-ups are rewritten only where one message is read.** `match_procedure` and the knowledge-base search see a single message, so "and after the first year?" becomes "Is there a fee to cancel a contract after the first year?" (the right article moved from 3rd to 1st). The rewrite is stored on the message (`additional_kwargs["standalone"]`); the chat still shows what was typed. Explanations aren't rewritten: the explain agent reads the whole conversation, and rewriting cut its key facts from 0.93 to 0.77.
+- **"unclear" is a Jev option, not a cut-off.** A vague message still has a best-fitting path, often at 0.7–0.8, so a 0.5 cut-off caught 3 of 12 vague messages; as an option, 12 of 12.
+- `match_procedure` picks one of the 20 procedures (by name and `when_to_use`) or "none"; "none", or a confidence under 0.5, goes to the knowledge base.
+- The 0.5 thresholds are at the top of `agent/supervisor.py`.
 
 
 
@@ -363,7 +361,7 @@ An injection, unclear and irrelevant end the turn with a fixed reply: no search,
 
 |        | Offline                                   | Online                           |
 | ------ | ----------------------------------------- | -------------------------------- |
-| Scores | 91 golden examples with known answers | every real conversation |
+| Scores | 91 golden examples with known answers     | every real conversation          |
 | When   | before a change ships                     | automatically, in LangSmith      |
 | How    | each reply compared with its right answer | checks and judges, no answer key |
 
@@ -381,25 +379,27 @@ An injection, unclear and irrelevant end the turn with a fixed reply: no search,
  right answer                             made up, contradictions             check → pass / fail
 ```
 
-- **Code checks** score what has one right answer (the procedure, the action, the article found) with plain code. **Jev judges** score what needs reading (does the answer state a fact? make one up?). Jev never grades its own routing.
-- **Thresholds** are the pass marks, e.g. "at least 19 of 20" or "MRR at least 0.9": set from the baseline with one miss of slack, and strict where one failure is never acceptable (guards, contradictions, attacks).
+- **Code checks** score what has one right answer (the procedure, the action, the article found) with plain code. **Jev judges** score what needs reading (does the answer state a fact? make one up?). Jev never grades its own routi
+- **The gate.** Every suite generates a summary JSON. A single offline `gate()` function (`eval/offline/run.py`) compares those results against the pass marks in `thresholds.yaml`, set from a 3-repetition baseline. We allow 1 miss of slack where models naturally vary, but zero slack for critical security and safety checks. The same gate function runs locally (`--gate`) and as a CI check on every PR that changes the agent, its data, the mock CRM, the loaders or the eval.
 - **Tests** (pytest, `tests/eval`) make sure the eval itself scores correctly: the saved right answers still match `data/`, and each code check, Jev judge and the gate pass a known-good made-up reply and fail a known-bad one. No model calls.
 
-| Where | What runs | When |
-| --- | --- | --- |
-| your machine | the offline eval | any time (command below) |
-| CI, every PR | the tests of the eval: seconds, no keys | every PR |
-| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change `agent/`, `data/` or `eval/`, weekly, and on demand |
+
+| Where            | What runs                                            | When                                                                |
+| ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| your machine     | the offline eval                                     | any time (command below)                                            |
+| CI, every PR     | the tests of the eval: seconds, no keys              | every PR                                                            |
+| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change the agent, its data, the mock CRM, the loaders or the eval |
 
 
-| Suite               | What it checks                                                      | Today's result (repeated runs)                       |
-| ------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
-| Walks (20)          | one per procedure: the right action, rules and steps                | 20/20                                          |
-| Routing (33) | easily confused procedures, policy vs case questions, off-topic, typos, too vague | 33/33 |
-| Knowledge base (15) | the right article found, key facts stated, gaps admitted            | recall@5 36/36, MRR 0.96, facts 0.99           |
-| Conversations (9)   | follow-ups: "why?", "how come?", "what does that rule say?", "and after the first year?", "same problem for CUST-1002", switching customers | every turn routed right; facts 0.98; 17/18 nothing made up |
-| Guards (4)          | unknown or malformed IDs, no customer named                         | 12/12                                          |
-| Adversarial (10) | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 30/30, resisted 30/30 |
+
+| Suite               | What it checks                                                                                                                                                  | Today's result (repeated runs)                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Walks (20)          | one per procedure: the right action, rules and steps                                                                                                            | 20/20                                                      |
+| Routing (33)        | easily confused procedures, policy vs case questions, off-topic, typos, too vague                                                                               | 33/33                                                      |
+| Knowledge base (15) | the right article found, key facts stated, gaps admitted                                                                                                        | recall@5 36/36, MRR 0.96, facts 0.99                       |
+| Conversations (9)   | follow-ups: "why?", "how come?", "what does that rule say?", "and after the first year?", "same problem for CUST-1002", switching customers                     | every turn routed right; facts 0.98; 17/18 nothing made up |
+| Guards (4)          | unknown or malformed IDs, no customer named                                                                                                                     | 12/12                                                      |
+| Adversarial (10)    | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 30/30, resisted 30/30        |
 
 
 ```bash

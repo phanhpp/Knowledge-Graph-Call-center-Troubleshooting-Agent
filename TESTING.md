@@ -129,7 +129,7 @@ Loading twice matters: a fresh, empty database can't have stale edges, so a sing
 
 ## Evaluation
 
-Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`. The offline eval runs in CI too (`offline-eval.yml`): on pull requests that change the agent, the data or the eval, weekly, and on demand.
+Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`. The offline eval runs in CI too (`offline-eval.yml`), on pull requests that change the agent, its data, the mock CRM, the loaders or the eval.
 
 ## Bugs pinned by a test
 
