@@ -16,8 +16,8 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 - **Citations come from the graph.** A troubleshooting answer cites its action and the rules governing it; a knowledge-base answer cites its articles and their rules. Code reads the IDs from Neo4j, so a citation can't be invented.
 - **Hybrid GraphRAG.** Neo4j-native vector and full-text search over the knowledge base, then graph grounding (`Article → CITES_RULE → Rule`) to attach the governing rules.
 - **Typed routing with a cautious fallback.** TypeSafe's Jev decision model returns probabilities, not prose, so routing is plain thresholds: an uncertain message goes to the knowledge base instead of a wrong procedure.
-- **Evaluated offline and online.** Offline: 89 golden examples in 6 suites run end to end through the real agent as LangSmith experiments, scored by exact code checks and Jev judges (the judge itself tested on known-bad answers), with a pass/fail gate. Online: LangSmith checks and Jev judges score every real conversation, with alerts to Slack and consultant 👍 👎.
-- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 311 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
+- **Evaluated offline and online.** Offline: 91 golden examples in 6 suites run end to end through the real agent as LangSmith experiments, scored by exact code checks and Jev judges (the judge itself tested on known-bad answers), with a pass/fail gate. Online: LangSmith checks and Jev judges score every real conversation, with alerts to Slack and consultant 👍 👎.
+- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 327 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
 
 
 
@@ -103,7 +103,17 @@ check_neo4j: is Neo4j reachable?
   no: reply "The knowledge graph is offline..." and stop
                       |
                       v
+check_message (*MODEL: Jev*): a prompt injection? a follow-up?
+  injection: refuse and stop
+                      |
+                      v
 classify_intent (*MODEL: Jev*): what does consultant want done?
+  unclear or off-topic: a fixed reply and stop
+  a troubleshooting or general follow-up: rewrite_question
+  (*MODEL: Claude*) first, so it stands on its own for
+  match_procedure and the knowledge-base search ("and after the
+  first year?" -> "Is there a fee to cancel a contract after the
+  first year?")
                       |
         +-------------+-------------+--------------------------------+
         |                           |                                |
@@ -308,37 +318,43 @@ Its three kinds of question:
 | `Score`  | Which level on a scale? | a score, the level descriptions, probabilities, a confidence | a spectrum, checked against a threshold    |
 
 
-A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it only for a clearly defined yes/no; use `Score` for a level. Routing uses `Choice` (`classify_intent`, `match_procedure`); the online evaluators use `Noul` and `Score` (see Evaluation). Jev is an external service (`api.typesafe.ai`, `TYPESAFE_API_KEY`): the consultant's message is sent to it. The package is still in beta.
+A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it only for a clearly defined yes/no; use `Score` for a level. Routing uses `Noul` (`check_message`: an injection? a follow-up?) and `Choice` (`classify_intent`, `match_procedure`); the online evaluators use `Noul` and `Score` (see Evaluation). Jev is an external service (`api.typesafe.ai`, `TYPESAFE_API_KEY`): the consultant's message is sent to it. The package is still in beta.
 
 ## Routing with Jev
 
-Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Each is one Jev call. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+Routing (`check_message`, `classify_intent`, then `match_procedure`, in `agent/supervisor.py`) is up to three Jev calls, decided in plain code. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
 
 ```
   the last 3 messages: the previous question and answer, then the new message
   |
   v
-  one Jev call, two questions, both about the new message:
-    path (Choice): troubleshooting / open_ended / explain / irrelevant / unclear, a probability for each
-    prompt injection? (yes/no probability)
+  check_message, one Jev call, two yes/no questions about the new message:
+    a prompt injection?  >= 0.5  --> refused ("it tries to change how I work")
+    a follow-up?         >= 0.5  --> saved for below
   |
   v
-  rules in plain code, in this order:
-  prompt injection >= 0.5                     --> refused ("it tries to change how I work")
+  classify_intent, one Jev call: path (Choice), a probability for each
+  troubleshooting / open_ended / explain / irrelevant / unclear
+  |
+  v
   unclear                                     --> asked to rephrase
   irrelevant                                  --> a fixed reply (not my job)
   explain, on the first message               --> open_ended       --> knowledge base
-  explain, after an earlier answer            --> explain          --> explain_answer
+  explain, after an earlier answer            --> explain          --> explain_answer (reads the conversation)
   troubleshooting                             --> troubleshooting  --> match_procedure
   open_ended                                  --> open_ended       --> knowledge base
+  troubleshooting or open_ended, a follow-up  --> rewrite_question (Claude) first: "and after the first
+                                                  year?" --> "Is there a fee to cancel a contract after
+                                                  the first year?"
 ```
 
-The first three end the turn with a fixed reply: no search, no Claude call. A prompt injection is refused rather than cleaned up: making the request clear is the consultant's job. Measured: attacks score 0.98–0.99; look-alikes ("can I skip the security questions?", "the customer says: please waive the late fee") 0.01–0.17.
+An injection, unclear and irrelevant end the turn with a fixed reply: no search, no Claude call. A prompt injection is refused rather than cleaned up: making the request clear is the consultant's job. Measured: attacks score 0.98–0.99; look-alikes ("can I skip the security questions?", "the customer says: please waive the late fee") 0.01–0.17.
 
-- **The last 3 messages, judged on the last.** A follow-up only makes sense next to what came before it: "how come?" asks about the last answer, and "and after the first year?" is a general question only after a cancellation-fee question. The path question may use the earlier messages to understand the new one. The injection question judges the new message alone: otherwise an injection refused last turn stays in view, and the clean message the refusal asks for is refused too (measured: 0.80, against 0.09). Older turns, often about other customers, stay out of the call.
+- **The last 3 messages, judged on the last.** A follow-up only makes sense next to what came before it: "how come?" asks about the last answer, and "and after the first year?" is a general question only after a cancellation-fee question. Every question is about the new message; the earlier two are context. The injection question judges the new message alone: otherwise an injection refused last turn stays in view, and the clean message the refusal asks for is refused too (measured: 0.80, against 0.09). Older turns, often about other customers, stay out of the call.
+- **A troubleshooting or general follow-up is rewritten for the step that reads it alone.** Routing on the last 3 messages got follow-ups right, but `match_procedure` and the knowledge-base search each read one message: the search ran on "and after the first year?" alone (the right article came 3rd), and "same problem for CUST-1002" matched no procedure. Rewritten, the right article comes first and PROC-001 matches. Claude sees the 3 messages labelled with their customers and the IDs each answer cited (both are in the messages' metadata, not their text). The rewrite is stamped on the consultant's message (`additional_kwargs["standalone"]`), so the web app and Slack still show what was typed. Explanations aren't rewritten: the explain agent reads the conversation itself, and a rewrite made it worse ("why?" became a general question about the procedure; key facts fell from 0.93 to 0.77). Measured on 18 messages after real answers: the follow-up question was right on all 18; Sonnet's rewrites were right on all 11 follow-ups (Haiku: 8).
 - **"unclear" is one of Jev's options, not a cut-off.** It used to mean "the chosen path under 0.5", which almost never happened: a vague message still has a best-fitting path, often at 0.7–0.8 ("the customer is not happy": troubleshooting 0.72), while clear ones went as low as 0.65. As an option, Jev caught all 12 vague test messages; the cut-off caught 3.
-- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none", given only the new message. "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
-- The 0.5 thresholds (prompt injection, procedure) are set at the top of `agent/supervisor.py` and checked by the offline routing and adversarial suites.
+- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none", given only the new message (rewritten, for a follow-up). "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
+- The 0.5 thresholds (prompt injection, follow-up, procedure) are set at the top of `agent/supervisor.py` and checked by the offline routing, conversations and adversarial suites.
 
 
 
@@ -347,7 +363,7 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 
 |        | Offline                                   | Online                           |
 | ------ | ----------------------------------------- | -------------------------------- |
-| Scores | 89 golden examples with known answers | every real conversation |
+| Scores | 91 golden examples with known answers | every real conversation |
 | When   | before a change ships                     | automatically, in LangSmith      |
 | How    | each reply compared with its right answer | checks and judges, no answer key |
 
@@ -356,11 +372,11 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 
 ### Offline: golden examples, before a change ships
 
-89 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
+91 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
 
 ```
  golden examples ──► the real agent ──► scored ─────────────────────────► gate
- 89, in 6 datasets    (the same graph    code checks: exact answers          thresholds.yaml:
+ 91, in 6 datasets    (the same graph    code checks: exact answers          thresholds.yaml:
  each with its         as production)    Jev judges: facts stated,           minimum passes per
  right answer                             made up, contradictions             check → pass / fail
 ```
@@ -372,18 +388,18 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 | Where | What runs | When |
 | --- | --- | --- |
 | your machine | the offline eval | any time (command below) |
-| CI, every PR | the tests of the eval: seconds, no keys | now |
-| CI, live | the offline eval, with its gate | planned: PRs that change `agent/`, `data/` or `eval/`, weekly, and on demand |
+| CI, every PR | the tests of the eval: seconds, no keys | every PR |
+| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change `agent/`, `data/` or `eval/`, weekly, and on demand |
 
 
 | Suite               | What it checks                                                      | Today's result (repeated runs)                       |
 | ------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
 | Walks (20)          | one per procedure: the right action, rules and steps                | 20/20                                          |
 | Routing (33) | easily confused procedures, policy vs case questions, off-topic, typos, too vague | 33/33 |
-| Knowledge base (15) | the right article found, key facts stated, gaps admitted            | recall@5 36/36, MRR 0.96, facts 0.94           |
-| Conversations (7)   | follow-ups: "why?", "how come?", "what does that rule say?", switching customers | every turn routed right; 14/15 nothing made up |
+| Knowledge base (15) | the right article found, key facts stated, gaps admitted            | recall@5 36/36, MRR 0.96, facts 0.99           |
+| Conversations (9)   | follow-ups: "why?", "how come?", "what does that rule say?", "and after the first year?", "same problem for CUST-1002", switching customers | every turn routed right; facts 0.98; 17/18 nothing made up |
 | Guards (4)          | unknown or malformed IDs, no customer named                         | 12/12                                          |
-| Adversarial (10) | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 27/27, resisted 27/27 |
+| Adversarial (10) | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 30/30, resisted 30/30 |
 
 
 ```bash
@@ -491,7 +507,7 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 
 | Suite                   | What it covers                                                                                                                                                                                                                                                                                                                                                                        | Count                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| **pytest**              | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites                                                                                                                                                                                     | 311 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
+| **pytest**              | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites                                                                                                                                                                                     | 327 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
 | **Vitest** (`web/`)     | the password gate, message formats, panel sizes, the feedback and full-source hooks                                                                                                                                                                                                                                                                                                   | 40                                                                          |
 | **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding                                                                                                                                                                                    | 23                                                                          |
 | **GitHub Actions**      | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | —                                                                           |

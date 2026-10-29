@@ -4,7 +4,7 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 
 | Layer | Tool | Where | Tests | Needs |
 |---|---|---|---|---|
-| Agent, data, Slack bot | pytest | the rest of `tests/` | 243 (218 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
+| Agent, data, Slack bot | pytest | the rest of `tests/` | 259 (234 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
 | The evaluators | pytest | `tests/eval/`, `tests/e2e/judges/` | 68 (62 fast + 6 end-to-end) | nothing; the end-to-end ones a Jev key |
 | Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
@@ -38,10 +38,10 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 
 | File | Tests | Covers |
 |---|---|---|
-| `test_supervisor.py` | 55 | the main graph: customer and Neo4j checks, routing (fake Jev), Jev retries, the explain agent (fake Claude) |
+| `test_supervisor.py` | 68 | the main graph: customer and Neo4j checks, routing and the follow-up rewrite (fake Jev, fake Claude), Jev retries, the explain agent |
 | `test_explain_tools.py` | 14 | the explain agent's tools can read procedures, rules and articles, and nothing else |
 | `test_procedural_executor.py` | 16 | the troubleshooting walk and its reply format |
-| `test_graph_rag_chain.py` | 3 | the knowledge-base search and answer (needs keys) |
+| `test_graph_rag_chain.py` | 6 | the knowledge-base search and answer (4 need keys); a question with query syntax (`:`) still searched; a follow-up searched as rewritten |
 | `test_sources.py` | 12 | the text behind each cited ID; the run id for 👍 👎 |
 | `test_config.py` | 3 | a down Neo4j is reported, and alerts can see it |
 | `test_validate.py` | 7 | the data files agree with each other; every procedure can finish |
@@ -117,7 +117,7 @@ Two GitHub Actions workflows, both without secrets.
 | Job | Runs |
 |---|---|
 | `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
-| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 274 pass, 6 skip because they need API keys |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 289 pass, 7 skip because they need API keys |
 
 **`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
 
@@ -129,7 +129,7 @@ Loading twice matters: a fresh, empty database can't have stale edges, so a sing
 
 ## Evaluation
 
-Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`.
+Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`. The offline eval runs in CI too (`offline-eval.yml`): on pull requests that change the agent, the data or the eval, weekly, and on demand.
 
 ## Bugs pinned by a test
 
@@ -147,4 +147,6 @@ Evaluation is separate from testing: the offline eval scores the agent on golden
 | A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
 | One busy moment at Jev (529 Overloaded) or a dropped connection failing a consultant's message | `test_supervisor.py` (retried up to 3 times, 10 s timeout) |
 | "Why did you cite KB-006?" answered without the article (and the citation disowned) | `test_supervisor.py` (the agent reads it) |
+| A knowledge-base question with a colon ("Policy question: …") failing the whole search | `test_graph_rag_chain.py` (query syntax escaped) |
+| A follow-up ("and after the first year?") searched and matched as typed, without the question before it | `test_supervisor.py`, `test_graph_rag_chain.py` (every step reads the rewrite) |
 | A Jev outage counted as wrong answers in the offline eval | `eval/test_offline_walks.py` (errored runs ask for a rerun) |
