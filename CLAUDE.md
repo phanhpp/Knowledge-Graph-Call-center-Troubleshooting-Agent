@@ -67,12 +67,12 @@ When generating or modifying the synthetic datasets described in `docs/input_pla
 ```
 data/      — crm_records.json, conditions.json, actions.json, procedures.json, rules.json, kb_articles.json
 etl/       — validate.py, load_to_neo4j.py, load_articles.py, audit_graph.py
-agent/     — state.py (graph state only), supervisor.py, procedural_executor.py, graph_rag_chain.py, ticket_interpreter.py,
+agent/     — state.py (graph state only), supervisor.py, explain_tools.py, procedural_executor.py, graph_rag_chain.py, ticket_interpreter.py,
              data_model.py (Reply), utils.py (reply / reply_of), sources.py, graph.py + http_app.py + routes/ (served by LangGraph Server)
 mock_crm/  — crm_store.py, condition_evaluator.py, lookup stores
 slack_bot/ — the Slack front end (Bolt, Socket Mode)
 web/       — the Next.js web app (proxy route to the agent, password gate, Vitest + Playwright)
-eval/      — evaluation plan and the online code evaluators
+eval/      — online code evaluators (online/) and the offline evaluation (offline/); the plans are docs/eval_plan.md and docs/offline_eval_plan.md
 ```
 
 ETL loads via Python driver batch writes (`UNWIND $rows AS row CALL (row) {...} IN TRANSACTIONS`), not `apoc.load.json` — the data is already Python-validated local JSON, not something Neo4j needs to fetch itself. Uniqueness/node-key constraints on every `MERGE`-targeted label are created before import (see `docs/proposed_plan.md` Phase 2).
@@ -83,4 +83,4 @@ Stack: LangGraph (plain nodes — no `deepagents`, see below), Neo4j (graph + na
 
 ## TODO
 
-- **Ask what the problem is when a message is unclear.** Done for the customer: a message naming no customer is fine (a general question needs none); a named ID is checked first (`check_customer`), and troubleshooting with no customer yet replies "Which customer is this about?" (`load_crm`). Not done: asking a clarifying question when the problem itself is unclear, instead of routing it to the knowledge base.
+- **Ask what the problem is when a message is unclear.** Done for the customer: a message naming no customer is fine (a general question needs none); a named ID is checked first (`check_customer`), and troubleshooting with no customer yet replies "Which customer is this about?" (`load_crm`). Done for the request too: "unclear" is one of Jev's path options (too vague to tell what is wanted), and the consultant is asked to rephrase; a prompt injection is refused, and an off-topic message gets a fixed reply. Not done: asking a *specific* clarifying question (which customer problem, which policy), instead of a generic rephrase.

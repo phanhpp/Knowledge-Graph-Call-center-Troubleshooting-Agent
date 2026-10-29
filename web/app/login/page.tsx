@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { safeNext } from "@/lib/safe-next";
+
 /** The password form. Signing in sets a cookie (app/api/login) that proxy.ts checks on every request. */
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -18,9 +20,9 @@ export default function LoginPage() {
       body: JSON.stringify({ password }),
     }).catch(() => null);
     if (res?.ok) {
-      // Back to where proxy.ts sent us from, but only to a path on this site.
+      // Back to where proxy.ts sent us from, but never to another site (lib/safe-next.ts).
       const next = new URLSearchParams(window.location.search).get("next");
-      window.location.assign(next?.startsWith("/") && !next.startsWith("//") ? next : "/");
+      window.location.assign(safeNext(next, window.location.origin));
       return;
     }
     setBusy(false);

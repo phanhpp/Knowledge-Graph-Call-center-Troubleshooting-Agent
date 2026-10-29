@@ -6,7 +6,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
+# packaging output; eval/offline/build/ holds the dataset build scripts, so it's kept
 build/
+!eval/offline/build/
 dist/
 .venv/
 venv/
@@ -27,3 +29,4 @@ Thumbs.db
 checkpoints.db*
 .venv-*/
 .langgraph_api/
+eval/offline/results/

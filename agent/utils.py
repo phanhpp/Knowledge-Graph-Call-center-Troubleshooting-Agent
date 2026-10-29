@@ -7,13 +7,14 @@ and the run that produced it (for 👍👎 feedback). These functions are the on
 those formats:
 
     consultant_message(text, customer_id)  used by callers (the Slack bot, tests) to send a message
+    as_seen(message)                       what the agent reads: a follow-up's standalone rewrite
     reply(text, citations)                 used by graph nodes to put the answer into state
     reply_of(state)                        used outside the graph to get the answer back out
 """
 
 from typing import Optional
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langsmith.run_helpers import get_current_run_tree
 
 from agent.data_model import Reply
@@ -28,7 +29,16 @@ def consultant_message(text: str, customer_id: Optional[str] = None) -> HumanMes
     return HumanMessage(text, additional_kwargs={"customer_id": customer_id} if customer_id else {})
 
 
-def reply(text: str, citations: list[str] | None = None) -> dict:
+def as_seen(message: BaseMessage) -> BaseMessage:
+    """The message as the agent reads it. A follow-up that needs the earlier messages to make sense
+    ("and after the first year?") carries a standalone rewrite in `additional_kwargs["standalone"]`
+    (agent/supervisor.py rewrite_question); every step reads that instead of the text typed. The text
+    typed stays the message's content, which the web app and Slack show."""
+    standalone = message.additional_kwargs.get("standalone")
+    return message.model_copy(update={"content": standalone}) if standalone else message
+
+
+def reply(text: str, citations: list[str] | None = None, looked_up: list[str] | None = None) -> dict:
     """The state update for the agent's reply: one AIMessage, with its citations on it.
 
     Every path returns this (or merges it into a larger update) instead of writing an `answer` field.
@@ -39,9 +49,13 @@ def reply(text: str, citations: list[str] | None = None) -> dict:
       - `run_id`: the turn's root run in LangSmith, so a 👍👎 on this reply lands on the run that
         produced it. Read here because it exists only while the turn runs; inside any node, even in
         the walk's subgraph, the trace id is the turn's root. Absent when tracing is off.
+      - `looked_up`: an explanation's files it read (agent/explain_tools.py), e.g.
+        ["articles/KB-006.md"], so a judge can see what it was based on. Absent on other replies.
     """
     ids = list(citations or [])
     kwargs = {"citations": ids, "sources": sources_for(ids)}
+    if looked_up:
+        kwargs["looked_up"] = list(looked_up)
     run = get_current_run_tree()
     if run is not None:
         kwargs["run_id"] = str(run.trace_id)

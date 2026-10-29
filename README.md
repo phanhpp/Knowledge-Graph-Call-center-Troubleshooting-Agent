@@ -1,6 +1,6 @@
 # Super Agent: a knowledge-graph copilot for call-centre troubleshooting
 
-[![CI](https://github.com/phanhpp/Knowledge-Graph-Call-center-Troubleshooting-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/phanhpp/Knowledge-Graph-Call-center-Troubleshooting-Agent/actions/workflows/ci.yml)
+![CI](https://github.com/phanhpp/Knowledge-Graph-Call-center-Troubleshooting-Agent/actions/workflows/ci.yml/badge.svg)
 
 A copilot for call-centre consultants. A consultant types a customer's problem; the agent checks the customer's account, decides what is being asked, and either **walks a troubleshooting procedure stored in a Neo4j knowledge graph** or **answers from a policy knowledge base with GraphRAG**. Every answer cites the actions, rules and articles it came from, read from the graph, never generated.
 
@@ -16,8 +16,10 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 - **Citations come from the graph.** A troubleshooting answer cites its action and the rules governing it; a knowledge-base answer cites its articles and their rules. Code reads the IDs from Neo4j, so a citation can't be invented.
 - **Hybrid GraphRAG.** Neo4j-native vector and full-text search over the knowledge base, then graph grounding (`Article → CITES_RULE → Rule`) to attach the governing rules.
 - **Typed routing with a cautious fallback.** TypeSafe's Jev decision model returns probabilities, not prose, so routing is plain thresholds: an uncertain message goes to the knowledge base instead of a wrong procedure.
-- **Online evaluation on every real conversation.** LangSmith code checks and Jev judges (made-up facts, contradictions, usefulness, retrieval relevance vs knowledge gaps), alerts to Slack, and consultant 👍 👎 on each answer.
-- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 231 pytest (25 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
+- **Evaluated offline and online.** Offline: 91 golden examples in 6 suites run end to end through the real agent as LangSmith experiments, scored by exact code checks and Jev judges (the judge itself tested on known-bad answers), with a pass/fail gate. Online: LangSmith checks and Jev judges score every real conversation, with alerts to Slack and consultant 👍 👎.
+- **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 327 pytest (31 end-to-end with real model calls), 47 Vitest and 23 Playwright tests.
+
+
 
 ## Architecture
 
@@ -40,25 +42,34 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
    vector index)                                                  👍 👎 feedback
 ```
 
-| Layer | Stack |
-|---|---|
-| Agent | Python 3.12, LangGraph (plain `StateGraph` nodes), Anthropic Claude, TypeSafe Jev |
-| Knowledge graph & retrieval | Neo4j (Aura in the cloud), native vector + full-text indexes, `neo4j-graphrag` `HybridCypherRetriever`, OpenAI embeddings |
-| Serving | LangGraph Server on LangSmith Deployment, custom Starlette routes |
-| Web | Next.js 16 (App Router), React 19, TypeScript, Node.js 24 (the route-handler proxy that streams to the agent), `@langchain/react` (`useStream`), Tailwind 4, on Vercel |
-| Slack | Slack Bolt, Socket Mode |
-| Quality | LangSmith tracing, online evaluators and alerts; pytest, Vitest, Playwright; GitHub Actions data-integrity gate |
+
+| Layer                       | Stack                                                                                                                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent                       | Python 3.12, LangGraph (plain `StateGraph` nodes), Anthropic Claude, TypeSafe Jev                                                                                      |
+| Knowledge graph & retrieval | Neo4j (Aura in the cloud), native vector + full-text indexes, `neo4j-graphrag` `HybridCypherRetriever`, OpenAI embeddings                                              |
+| Serving                     | LangGraph Server on LangSmith Deployment, custom Starlette routes                                                                                                      |
+| Web                         | Next.js 16 (App Router), React 19, TypeScript, Node.js 24 (the route-handler proxy that streams to the agent), `@langchain/react` (`useStream`), Tailwind 4, on Vercel |
+| Slack                       | Slack Bolt, Socket Mode                                                                                                                                                |
+| Quality                     | LangSmith tracing, online evaluators and alerts; pytest, Vitest, Playwright; GitHub Actions data-integrity gate                                                        |
+
+
+
 
 ## Design decisions
 
-| Decision | Why |
-|---|---|
-| Procedures and rules as graph nodes, not prompt text | Policy is enforced structurally: an action's governing rules are edges, so they can't be skipped or misremembered by a model. Conditions, actions and APIs are shared libraries referenced from many steps. |
-| A deterministic walk; an LLM only for free-text tickets | Every other check is a known lookup, so code is faster, cheaper and auditable. Reading a ticket is language, so that one condition uses Claude, with a retry when it's unsure. |
-| Citations read by code from Neo4j | A model can't cite a rule that doesn't exist. An online check (`citations_exist`) guards it anyway. |
-| Jev for routing and judging | Typed probabilities, no parsing, about 0.3 s a call: routing thresholds and judge alerts are numbers you can tune. Jev never judges its own routing (that's checked offline). |
-| Server-side proxy for the web app | The browser never sees the agent's URL or API key; the password is checked in `proxy.ts` and again in the proxy route. |
-| Socket Mode for Slack | An internal tool with no public endpoint needed; the trade-off (a long-running process) is the reason HTTP mode is on the roadmap now the agent is deployed. |
+
+| Decision                                                 | Why                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Procedures and rules as graph nodes, not prompt text     | Policy is enforced structurally: an action's governing rules are edges, so they can't be skipped or misremembered by a model. Conditions, actions and APIs are shared libraries referenced from many steps.                                                                                                    |
+| A deterministic walk; an LLM only for free-text tickets  | Every other check is a known lookup, so code is faster, cheaper and auditable. Reading a ticket is language, so that one condition uses Claude, with a retry when it's unsure.                                                                                                                                 |
+| Citations read by code from Neo4j                        | A model can't cite a rule that doesn't exist. An online check (`citations_exist`) guards it anyway.                                                                                                                                                                                                            |
+| An agent only where what to read depends on the question | The explain step is a small Claude agent with read-only tools over the procedures, rules and articles (an in-memory folder, no disk access), so "why did you cite KB-006?" reads that article and "why didn't it check for a credit?" the procedure, instead of guessing. Everything else follows fixed steps. |
+| Jev for routing and judging                              | Typed probabilities, no parsing, about 0.3 s a call: routing thresholds and judge alerts are numbers you can tune. Jev never judges its own routing (that's checked offline).                                                                                                                                  |
+| Server-side proxy for the web app                        | The browser never sees the agent's URL or API key; the password is checked in `proxy.ts` and again in the proxy route.                                                                                                                                                                                         |
+| Socket Mode for Slack                                    | An internal tool with no public endpoint needed; the trade-off (a long-running process) is the reason HTTP mode is on the roadmap now the agent is deployed.                                                                                                                                                   |
+
+
+
 
 ## How a request flows
 
@@ -92,7 +103,17 @@ check_neo4j: is Neo4j reachable?
   no: reply "The knowledge graph is offline..." and stop
                       |
                       v
+check_message (*MODEL: Jev*): a prompt injection? a follow-up?
+  injection: refuse and stop
+                      |
+                      v
 classify_intent (*MODEL: Jev*): what does consultant want done?
+  unclear or off-topic: a fixed reply and stop
+  a troubleshooting or general follow-up: rewrite_question
+  (*MODEL: Claude*) first, so it stands on its own for
+  match_procedure and the knowledge-base search ("and after the
+  first year?" -> "Is there a fee to cancel a contract after the
+  first year?")
                       |
         +-------------+-------------+--------------------------------+
         |                           |                                |
@@ -100,12 +121,12 @@ classify_intent (*MODEL: Jev*): what does consultant want done?
         |                           |                                |
         v                           |                                v
 load_crm: customer's CRM record     |                              explain_answer
-  (troubleshooting only); no        |                              (*MODEL: Claude*):
+  (troubleshooting only); no        |                              (*MODEL: Claude agent*):
   customer yet: ask which one       |                              last 10 messages,
-        |                           |                              those about a     
-        v                           v                              customer labelled 
-match_procedure (*MODEL: Jev*)      |                              with its ID, + the
-  which of 20 procedures;           |                              rules' wording    
+        |                           |                              labelled by customer;
+        v                           v                              reads the procedures,
+match_procedure (*MODEL: Jev*)      |                              rules, articles it needs
+  which of 20 procedures;           |                              (ls, read_file, grep)
   "none" -> knowledge base -------->+                                |
         |                           |                                |
         v                           v                                |
@@ -150,6 +171,8 @@ Checked (PROC-001 "Customer cannot activate roaming"):
 2. Customer's plan is inactive: no (plan_status = active)
 3. Device does not support roaming bands in the destination country: no (device.device_roaming_compatible = True)
 ```
+
+
 
 ## The core idea: procedures as graph data
 
@@ -210,6 +233,8 @@ Procedure PROC-001  "Customer cannot activate roaming"
 - There is no `Procedure` node. A procedure is every `Step` with the same `procedureId`, joined in order by `NEXT_STEP`.
 - `API` nodes describe how a condition would be checked in production. The agent does not read them. It reads the steps, actions and rules from Neo4j and the full condition from `data/conditions.json`.
 
+
+
 ## What's in the citations
 
 Every reply carries `citations`: the IDs of what the answer came from. They depend on which path answered:
@@ -221,6 +246,9 @@ Every reply carries `citations`: the IDs of what the answer came from. They depe
 | **Knowledge base** (`graph_rag_chain`)                                                    | each retrieved article, followed by the rules it cites (a rule cited by several articles appears once) | `KB-006, R004, KB-005, R005, R013, …` | code: from the search results, read from Neo4j                                                         |
 | **Explain**                                                                               | nothing                                                                                                | —                                     | an explanation is not a new source; the answer it explains already showed its sources                  |
 | **Fixed messages** (unknown customer, Neo4j down, "Which customer…?", no procedure found) | nothing                                                                                                | —                                     | —                                                                                                      |
+
+
+
 
 ## GraphRAG pipeline
 
@@ -262,6 +290,8 @@ Every reply carries `citations`: the IDs of what the answer came from. They depe
 
 ```
 
+
+
 ## Jev
 
 **Jev** (TypeSafe's classification model, via the `langchain-typesafe` package) is **a specialized LLM architecture (a "System One" classification model).**
@@ -288,42 +318,99 @@ Its three kinds of question:
 | `Score`  | Which level on a scale? | a score, the level descriptions, probabilities, a confidence | a spectrum, checked against a threshold    |
 
 
-A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it only for a clearly defined yes/no; use `Score` for a level. Routing uses `Choice` (`classify_intent`, `match_procedure`); the online evaluators use `Noul` and `Score` (see Evaluation). Jev is an external service (`api.typesafe.ai`, `TYPESAFE_API_KEY`): the consultant's message is sent to it. The package is still in beta.
+A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it only for a clearly defined yes/no; use `Score` for a level. Routing uses `Noul` (`check_message`: an injection? a follow-up?) and `Choice` (`classify_intent`, `match_procedure`); the online evaluators use `Noul` and `Score` (see Evaluation). Jev is an external service (`api.typesafe.ai`, `TYPESAFE_API_KEY`): the consultant's message is sent to it. The package is still in beta.
 
-## Routing
+## Routing with Jev
 
-Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Each is one Jev Choice, given only the consultant's latest message. It judges what the consultant wants done, not the topic: most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+Routing (`check_message`, `classify_intent`, then `match_procedure`, in `agent/supervisor.py`) is up to three Jev calls, decided in plain code. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
 
+```markdown
+  the last 3 messages: the previous question and answer, then the new message
+                                    │
+                                    ▼
+  check_message, one Jev call, two yes/no questions about the new message:
+    a prompt injection?  >= 0.5  ──► refused ("it tries to change how I work")
+    a follow-up?         >= 0.5  ──► saved for below
+                                    │
+                                    ▼
+  classify_intent, one Jev call: path (Choice), a probability for each
+  troubleshooting / open_ended / explain / irrelevant / unclear
+                                    │
+                                    ▼
+  unclear                                     ──► asked to rephrase
+  irrelevant                                  ──► a fixed reply (not my job)
+  explain, on the first message               ──► open_ended       ──► knowledge base
+  explain, after an earlier answer            ──► explain          ──► explain_answer (reads context)
+  troubleshooting                             ──► troubleshooting  ──► match_procedure
+  open_ended                                  ──► open_ended       ──► knowledge base
+  troubleshooting or open_ended, a follow-up  ──► rewrite_question (Claude) first
 ```
-  the consultant's latest message only (not the conversation)
-  |
-  v
-  one Jev Choice: what does the consultant want done? (not the topic)
-  returns a label and a probability for each label,
-  e.g. troubleshooting 0.96, open_ended 0.03, explain 0.01
-  |
-  v
-  rules in plain code:
-  troubleshooting, P(troubleshooting) >= 0.5  --> troubleshooting  --> match_procedure
-  troubleshooting, P(troubleshooting) <  0.5  --> open_ended       --> knowledge base
-  explain, on the first message               --> open_ended       --> knowledge base
-  explain, after an earlier answer            --> explain          --> explain_answer
-  open_ended                                  --> open_ended       --> knowledge base
-```
 
-- **Only the latest message.** Measured live, it classifies as well as the whole conversation, and it keeps earlier customers' messages and a growing history out of the Jev calls. The "nothing to explain on the first message" rule checks the saved conversation, which is still complete.
-- **The probability, not the confidence.** The decision uses the chosen label's probability. Jev's `confidence` measures how concentrated the whole distribution is, which is harder to read: for "and the fee?" after a cancellation, confidence was 0.54 while open_ended's probability was 0.69.
-- **The fee question** ("What are the early termination fees if I cancel my contract?") goes to the knowledge base (open_ended 0.92), the case the old Claude classifier got wrong.
-- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none". "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
-- The 0.5 thresholds are starting values, set at the top of `agent/supervisor.py`. Tune them on a labelled set.
+An injection, unclear and irrelevant get a fixed reply: no search, no Claude call. An injection is refused, not cleaned up (attacks score 0.98–0.99; look-alikes like "can I skip the security questions?" 0.01–0.17).
+
+- **Last 3 messages, judged on the last.** A follow-up needs what came before it ("how come?", "and after the first year?"). The injection check looks at the new message only, so a clean resend after a refusal isn't refused again.
+- **Follow-ups are rewritten only where one message is read.** `match_procedure` and the knowledge-base search see a single message, so "and after the first year?" becomes "Is there a fee to cancel a contract after the first year?" (the right article moved from 3rd to 1st). The rewrite is stored on the message (`additional_kwargs["standalone"]`); the chat still shows what was typed. Explanations aren't rewritten: the explain agent reads the whole conversation, and rewriting cut its key facts from 0.93 to 0.77.
+- **"unclear" is a Jev option, not a cut-off.** A vague message still has a best-fitting path, often at 0.7–0.8, so a 0.5 cut-off caught 3 of 12 vague messages; as an option, 12 of 12.
+- `match_procedure` picks one of the 20 procedures (by name and `when_to_use`) or "none"; "none", or a confidence under 0.5, goes to the knowledge base.
+- The 0.5 thresholds are at the top of `agent/supervisor.py`.
+
+
 
 ## Evaluation
 
-LangSmith scores every real conversation automatically. Setup: `eval/eval_plan.md`.
 
-### Code checks: rules that must always hold
+|        | Offline                                   | Online                           |
+| ------ | ----------------------------------------- | -------------------------------- |
+| Scores | 91 golden examples with known answers     | every real conversation          |
+| When   | before a change ships                     | automatically, in LangSmith      |
+| How    | each reply compared with its right answer | checks and judges, no answer key |
 
-Score: **1** = OK, **0** = broken.
+
+
+
+### Offline: golden examples, before a change ships
+
+91 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
+
+```
+ golden examples ──► the real agent ──► scored ─────────────────────────► gate
+ 91, in 6 datasets    (the same graph    code checks: exact answers          thresholds.yaml:
+ each with its         as production)    Jev judges: facts stated,           minimum passes per
+ right answer                             made up, contradictions             check → pass / fail
+```
+
+- **Code checks** score what has one right answer (the procedure, the action, the article found) with plain code. **Jev judges** score what needs reading (does the answer state a fact? make one up?). Jev never grades its own routi
+- **The gate.** Every suite generates a summary JSON. A single offline `gate()` function (`eval/offline/run.py`) compares those results against the pass marks in `thresholds.yaml`, set from a 3-repetition baseline. We allow 1 miss of slack where models naturally vary, but zero slack for critical security and safety checks. The same gate function runs locally (`--gate`) and as a CI check on every PR that changes the agent, its data, the mock CRM, the loaders or the eval.
+- **Tests** (pytest, `tests/eval`) make sure the eval itself scores correctly: the saved right answers still match `data/`, and each code check, Jev judge and the gate pass a known-good made-up reply and fail a known-bad one. No model calls.
+
+
+| Where            | What runs                                            | When                                                                |
+| ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| your machine     | the offline eval                                     | any time (command below)                                            |
+| CI, every PR     | the tests of the eval: seconds, no keys              | every PR                                                            |
+| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change the agent, its data, the mock CRM, the loaders or the eval (not docs alone, not on merge) |
+
+
+
+| Suite               | What it checks                                                                                                                                                  | Today's result (repeated runs)                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Walks (20)          | one per procedure: the right action, rules and steps                                                                                                            | 20/20                                                      |
+| Routing (33)        | easily confused procedures, policy vs case questions, off-topic, typos, too vague                                                                               | 33/33                                                      |
+| Knowledge base (15) | the right article found, key facts stated, gaps admitted                                                                                                        | recall@5 36/36, MRR 0.96, facts 0.99                       |
+| Conversations (9)   | follow-ups: "why?", "how come?", "what does that rule say?", "and after the first year?", "same problem for CUST-1002", switching customers                     | every turn routed right; facts 0.98; 17/18 nothing made up |
+| Guards (4)          | unknown or malformed IDs, no customer named                                                                                                                     | 12/12                                                      |
+| Adversarial (10)    | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 30/30, resisted 30/30        |
+
+
+```bash
+uv run python -m eval.offline.run --suite all --gate   # details: eval/README.md
+```
+
+
+
+### Online: every real conversation
+
+**Code checks: rules that must always hold.** Score: **1** = OK, **0** = broken.
 
 
 | Check                              | What it checks                                                                                  |
@@ -333,11 +420,7 @@ Score: **1** = OK, **0** = broken.
 | `troubleshooting_customer_handled` | Troubleshooting runs only when the customer is known; otherwise the bot asks "Which customer?". |
 
 
-
-
-### AI judge (Jev): reads a reply and answers one question about it
-
-Score: **0** = fine, **higher** = worse.
+**AI judge (Jev): reads a reply and answers one question about it.** Score: **0** = fine, **higher** = worse.
 
 
 | Reply                     | Check                          | Question                                 | Score                              |
@@ -421,13 +504,15 @@ A direct message goes the same way, through `slack_bot/chat.py`: the DM (or a th
 
 ## Testing
 
-| Suite | What it covers | Count |
-|---|---|---|
-| **pytest** | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators | 231 tests; 25 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
-| **Vitest** (`web/`) | the password gate, message formats, panel sizes, the feedback and full-source hooks | 40 |
-| **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding | 23 |
-| **GitHub Actions** | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | — |
-| **Smoke test** | `deploy/smoke.py`: one real conversation and every custom route, against a local or deployed server | 11 checks |
+
+| Suite                   | What it covers                                                                                                                                                                                                                                                                                                                                                                        | Count                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **pytest**              | data validation, the condition evaluator, the walk, routing, GraphRAG, explain, the custom routes, the Slack bot (fake Slack events), the online code evaluators, the offline evaluation's suites                                                                                                                                                                                     | 327 tests; 31 of them end-to-end with real Neo4j and model calls (`-m e2e`) |
+| **Vitest** (`web/`)     | the password gate, the sign-in redirect, message formats, panel sizes, the feedback and full-source hooks                                                                                                                                                                                                                                                                                                   | 47                                                                          |
+| **Playwright** (`web/`) | the real Next.js server against a **fake agent replaying traffic recorded from the real one**: sign-in, citations, sources, the customer card, sending, feedback, failures, resizing and expanding                                                                                                                                                                                    | 23                                                                          |
+| **GitHub Actions**      | **CI** on every pull request, required before merging to `main`: the web app (type check, Vitest, Playwright) and the agent (import check with the deployed dependencies only, then the fast pytest suite on Python 3.12 against a throwaway Neo4j). **Data integrity** on pull requests touching the data: validate the JSON, load it over the base branch's graph, audit the result | —                                                                           |
+| **Smoke test**          | `deploy/smoke.py`: one real conversation and every custom route, against a local or deployed server                                                                                                                                                                                                                                                                                   | 11 checks                                                                   |
+
 
 The online evaluators (above) keep checking real traffic after deployment. Every suite, file by file, and the bugs each one pins: [TESTING.md](TESTING.md).
 
@@ -457,10 +542,12 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 
 ## Deployment
 
-- **Agent:** `langgraph.json` serves `agent/graph.py:graph` as `super_agent`, with the custom routes from `agent/http_app.py`, on LangSmith Deployment (built from GitHub on push; Python 3.12; the package list in `pyproject.toml` decides what's in the image). Its secrets are the model keys and the four `NEO4J_*` settings for Aura.
+- **Agent:** `langgraph.json` serves `agent/graph.py:graph` as `super_agent`, with the custom routes from `agent/http_app.py`, on LangSmith Deployment (built from GitHub on push; Python 3.12; the package list in `pyproject.toml` decides what's in the image). Its secrets are the model keys and the four `NEO4J_`* settings for Aura.
 - **Graph:** Neo4j Aura, loaded with the same `etl` scripts.
 - **Check a deployment:** `uv run python deploy/smoke.py --url <deployment URL>` (sends `LANGSMITH_API_KEY`).
 - **Web app:** on Vercel ([live](https://super-agent-silk.vercel.app)), root `web/`, with `AGENT_SERVER_URL`, `LANGSMITH_API_KEY` and `WEB_PASSWORD` as environment variables.
+
+
 
 ## Roadmap
 
@@ -469,12 +556,15 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 - Calibrate the Jev judges' thresholds on hand-labelled runs, and small offline test sets (routing, retrieval recall@5).
 - Human-in-the-loop for low-confidence ticket readings: pause and ask the consultant instead of guessing.
 
+
+
 ## Project structure
 
 ```
 .
 ├── agent/                      the LangGraph agent
-│   ├── supervisor.py           the main graph: customer check, Neo4j check, routing (Jev), explain
+│   ├── supervisor.py           the main graph: customer check, Neo4j check, routing (Jev), the explain agent
+│   ├── explain_tools.py        the explain agent's read-only tools: procedures, rules and articles as files
 │   ├── procedural_executor.py  the troubleshooting walk: a subgraph that follows a procedure step by step
 │   ├── ticket_interpreter.py   Claude reads a customer's ticket (ticket conditions only)
 │   ├── graph_rag_chain.py      the knowledge-base path: hybrid search, graph grounding, Claude answers
@@ -494,6 +584,8 @@ Claude features need `ANTHROPIC_API_KEY`, embeddings `OPENAI_API_KEY`, routing `
 ├── langgraph.json              how LangGraph Server serves the agent
 └── config.py                   settings, the Neo4j driver and its traced connectivity check
 ```
+
+
 
 ## License
 

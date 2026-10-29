@@ -1,0 +1,142 @@
+# The offline eval with its gate: the golden examples through the real agent, scored by code checks
+# and Jev judges (see eval/README.md). It makes real model calls, so it needs 4 secrets and costs a
+# little each run. Not a required check: a Jev or Anthropic outage means "rerun", not "fix the code".
+#
+#   when     only pull requests that change what the agent does or how it's scored: the agent, its
+#            data, the mock CRM, the loaders, its config, the eval. Never for .md files alone, nor for
+#            dependency-only pull requests (Dependabot's get no secrets). A failed run is rerun from the
+#            pull request's checks. Merging doesn't run it (no push trigger).
+#   database a throwaway Neo4j, loaded from data/: a pull request's own data, never production's, and no
+#            Aura credentials in GitHub. Under a minute to start and load; embedding the 25 articles
+#            is about 8,300 tokens (~$0.0002). The eval's model calls cost about 100x more.
+#   runs     every suite with --gate, once; conversations twice (an explanation sometimes adds a guess).
+#            About 3 minutes in all, setup included
+#   output   each suite's results table in the run's summary; the results files as an artifact
+
+name: Offline eval
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "data/**"
+      - "mock_crm/**"
+      - "etl/**"
+      - "config.py"
+      - "eval/**"
+      - ".github/workflows/offline-eval.yml"
+      - "!**/*.md" # docs alone never run the eval
+
+# The GITHUB_TOKEN can only read the repository: no job here pushes, comments or edits anything
+# (artifact uploads and caches use their own token), so a compromised step couldn't either.
+permissions:
+  contents: read
+
+# A newer push to the same pull request makes an older run pointless (and it costs money).
+concurrency:
+  group: offline-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The paths above are checked against the whole pull request, so once it touches agent/, every later
+  # push would match, even one that only edits a README. This job checks what this push changed (or,
+  # on a newly opened pull request, the whole pull request) and lets the eval run only if it matters.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        name: Did this push change anything the eval measures?
+        shell: bash
+        env:
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          from="$BASE"
+          if [ "$ACTION" = synchronize ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            from="$BEFORE"  # a new push: only what it changed (after a force push, the whole pull request)
+          fi
+          files=$(git diff --name-only "$from" "$HEAD")  # if this fails, the job fails: never a silent skip
+          relevant=$(printf '%s\n' "$files" \
+            | grep -E '^(agent|data|mock_crm|etl|eval)/|^config\.py$|^\.github/workflows/offline-eval\.yml$' \
+            | grep -v '\.md$' || true)
+          echo "Changed files the eval measures:"; echo "${relevant:-(none)}"
+          echo "relevant=$([ -n "$relevant" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  offline-eval:
+    name: offline-eval
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      neo4j:
+        image: neo4j:5.26 # as in ci.yml: neo4j-graphrag needs 5.18.1+
+        env:
+          NEO4J_AUTH: neo4j/ci-test-password
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-test-password 'RETURN 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+
+    env:
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ci-test-password
+      NEO4J_DATABASE: neo4j
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }} # the datasets and experiments live in LangSmith
+      LANGSMITH_TRACING: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12" # the deployment's version
+
+      - run: uv sync --frozen
+
+      - name: Load the graph and the knowledge-base articles
+        run: |
+          uv run python -m etl.validate
+          uv run python -m etl.load_to_neo4j
+          uv run python -m etl.load_articles
+
+      # Every suite runs even after one fails, so the summary shows all of them; the job fails at the end.
+      - name: Run every suite with its gate
+        shell: bash
+        run: |
+          set -o pipefail
+          failed=0
+          for suite in walks routing kb guards adversarial conversations; do
+            repetitions=1
+            if [ "$suite" = conversations ]; then repetitions=2; fi
+            uv run python -m eval.offline.run --suite "$suite" --tag "ci-${GITHUB_SHA::7}" \
+              --repetitions "$repetitions" --gate | tee -a results.txt || failed=1
+          done
+          { echo "## Offline eval"; echo '```'; cat results.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$failed"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-eval-results
+          path: eval/offline/results/
+          retention-days: 30

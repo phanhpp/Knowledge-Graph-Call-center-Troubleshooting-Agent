@@ -4,19 +4,19 @@ How Super Agent is tested, layer by layer: what each suite covers, what it needs
 
 | Layer | Tool | Where | Tests | Needs |
 |---|---|---|---|---|
-| Agent, data, Slack bot | pytest | `tests/` | 231 (206 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
-| Web app logic | Vitest | `web/lib/*.test.ts` | 40 | nothing (no browser, no server) |
+| Agent, data, Slack bot | pytest | the rest of `tests/` | 259 (234 fast + 25 end-to-end) | Neo4j with the graph loaded; end-to-end also Claude, Jev and OpenAI keys |
+| The evaluators | pytest | `tests/eval/`, `tests/e2e/judges/` | 68 (62 fast + 6 end-to-end) | nothing; the end-to-end ones a Jev key |
+| Web app logic | Vitest | `web/lib/*.test.ts` | 47 | nothing (no browser, no server) |
 | Web app in a browser | Playwright | `web/e2e/` | 23 | nothing: a fake agent replays recorded traffic |
 | A running server | smoke script | `deploy/smoke.py` | 15 checks | a local or deployed agent server (real model calls) |
 | Every pull request | GitHub Actions | `.github/workflows/ci.yml` | 2 jobs | runs in CI, no secrets; required before merging to `main` |
 | Data and graph | GitHub Actions | `.github/workflows/data-integrity.yml` | 1 job | runs in CI with a throwaway Neo4j, on data pull requests |
-| Production traffic | LangSmith online evaluators | `eval/` | 3 code checks + 7 Jev judges | runs in LangSmith on every real conversation |
 
 ## Running them
 
 ```bash
 uv run pytest -m "not e2e"        # fast suite: unit and integration tests (Neo4j with the graph loaded)
-uv run pytest                     # everything, including the 25 end-to-end tests (real model calls)
+uv run pytest                     # everything, including the 31 end-to-end tests (real model calls)
 uv run pytest tests/slack_bot     # one area
 
 cd web
@@ -34,22 +34,43 @@ uv run python deploy/smoke.py --url <deployment>    # against a deployment (send
 
 ## pytest (`tests/`)
 
+### Agent, data, Slack bot
+
 | File | Tests | Covers |
 |---|---|---|
-| `test_validate.py` | 7 | `etl.validate`: IDs and fields match across the data files; every procedure can finish (no cycles, all steps reachable, a fallback action on the last step) |
-| `test_condition_evaluator.py` | 21 | field and chain conditions checked against the mock CRM and lookup APIs |
-| `test_procedural_executor.py` | 16 | the troubleshooting walk: fetching steps, advancing or resolving, the reply format ("Why:" and the checked steps), ticket conditions read by Claude. Pins the infinite-loop bug fixed by routing with a `Command` |
-| `test_supervisor.py` | 40 | the main graph: customer checks, the Neo4j check, routing with a fake Jev, `load_crm`, and `explain`: the history labels, a label copied by Claude removed, never claiming an earlier answer was wrong |
-| `test_graph_rag_chain.py` | 3 | the knowledge-base path: hybrid search, graph grounding, the answer and its citations (needs keys) |
-| `test_sources.py` | 12 | the text behind each cited ID (short on replies, full on request), and `reply()`: citations unchanged, sources added, the run id is the turn's **root** run |
-| `test_http_app.py` | 11 | the custom routes: `/customers` and `/sources` (200 and 404), `/feedback` (rejects a bad run id or score; newest vote wins) with a fake LangSmith client |
-| `test_config.py` | 3 | the Neo4j check: a down Neo4j gives a reason and is recorded as an **errored traced step**, so alerts see it |
-| `eval/test_online_code_evaluators.py` | 17 | the online code evaluators, loaded by path as LangSmith runs them: good, bad and empty runs; their copies of the valid IDs and the error text still match the app; one test on the real graph's output |
-| `slack_bot/` (8 files) | 76 | message parsing, Slack formatting, access control (members channel, fails closed), conversation threads, saved DM conversations, the `/agent` and DM handlers, Bolt wiring. All with fake Slack events: no network |
-| `e2e/troubleshooting/` | 6 | the full graph with real models: field, chain and ticket conditions |
-| `e2e/open_ended/` | 3 | knowledge-base questions, including the fee question an earlier classifier misrouted |
-| `e2e/follow_ups/` | 11 | `explain`, multi-customer conversations, conversations saved and resumed |
+| `test_supervisor.py` | 68 | the main graph: customer and Neo4j checks, routing and the follow-up rewrite (fake Jev, fake Claude), Jev retries, the explain agent |
+| `test_explain_tools.py` | 14 | the explain agent's tools can read procedures, rules and articles, and nothing else |
+| `test_procedural_executor.py` | 16 | the troubleshooting walk and its reply format |
+| `test_graph_rag_chain.py` | 6 | the knowledge-base search and answer (4 need keys); a question with query syntax (`:`) still searched; a follow-up searched as rewritten |
+| `test_sources.py` | 12 | the text behind each cited ID; the run id for 👍 👎 |
+| `test_config.py` | 3 | a down Neo4j is reported, and alerts can see it |
+| `test_validate.py` | 7 | the data files agree with each other; every procedure can finish |
+| `test_condition_evaluator.py` | 21 | conditions checked against the mock CRM |
+| `test_http_app.py` | 11 | the custom routes: `/customers`, `/sources`, `/feedback` |
+| `slack_bot/` (8 files) | 76 | the Slack bot, with fake Slack events |
+| `e2e/troubleshooting/` | 6 | walks, with real models |
+| `e2e/open_ended/` | 3 | knowledge-base questions, with real models |
+| `e2e/follow_ups/` | 11 | follow-ups and saved conversations, with real models |
 | `e2e/errors/` | 5 | unknown customer IDs stop before any paid model call |
+
+### The evaluators
+
+These test the eval, not the agent, with no model calls (except 6 with the real Jev). The offline eval works in 4 steps, and each step has its own tests:
+
+```
+1. Golden data    ──►  2. Code checks      ──►  3. Jev judges       ──►  4. The gate
+the right answers      score exact things       score what needs         compares the scores
+for 81 examples        (path, rules, MRR…)      reading (facts…)         with thresholds.yaml
+```
+
+| Step | Its tests check | If it were wrong | Key tests | Tests |
+|---|---|---|---|---|
+| 1. Golden data | the right answers are right (the oracle recomputes the walks from `data/`), and each dataset file is what its build script makes | a good agent fails, or a broken one passes | `test_walks_answer_key_still_matches_the_data`, `test_oracle_matches_the_known_roaming_walk`, `test_kb_file_is_what_its_build_script_makes` (one like it per dataset) | 16 |
+| 2. Code checks | each check passes a good reply, fails a bad one, and skips one it doesn't apply to | wrong scores, e.g. the right article at #2 scored 0 instead of 0.5 MRR | `test_recall_and_mrr_find_the_article_in_search_order`, `test_walk_evaluators`, `test_checklist_parser_reads_the_agents_real_reply_format` | 13 |
+| 3. Jev judges | each judge asks Jev the right questions about what the agent saw, and turns its probabilities into scores (fake Jev); the real Jev gets 6 answers with a known verdict right | a made-up fact passes, or a good answer fails | `test_answerable_questions_ask_about_each_fact_and_contradiction`, `test_unanswerable_questions_ask_whether_it_admits_the_gap`, `test_a_good_answer_passes` (real Jev) | 10, + 6 real |
+| 4. The gate | `run.py --gate` exits 1 below a pass mark, and asks for a rerun when runs errored | a quality drop passes, or an outage looks like one | `test_gate_fails_below_a_threshold_and_passes_at_it`, `test_gate_applies_as_a_rate_with_repetitions`, `test_gate_asks_for_a_rerun_when_runs_errored` | 6 |
+
+The files go by suite, not by step: `eval/test_offline_walks.py` (14), `eval/test_offline_routing.py` (4), `eval/test_offline_kb.py` (12), `eval/test_offline_behaviour.py` (15: guards, conversations, adversarial) and `e2e/judges/` (6, real Jev). The online eval's code checks have their own: `eval/test_online_code_evaluators.py` (17).
 
 ## Vitest (`web/lib/`)
 
@@ -58,6 +79,7 @@ Each file sits next to the code it tests; no browser and no agent server (jsdom,
 | File | Tests | Covers |
 |---|---|---|
 | `auth.test.ts` | 6 | the password gate: the right password passes; a wrong or forged cookie fails; the cookie never contains the password; no password configured lets nobody in |
+| `safe-next.test.ts` | 7 | after signing in: back to the page you came from, never to another site (`//`, `/\`, a tab, another origin, `javascript:`) |
 | `message.test.ts` | 9 | the message sent to the agent (customer ID in `additional_kwargs`, cleaned up); reading citations, sources and run ids; the saved state winning over a streamed reply |
 | `use-feedback.test.ts` | 10 | 👍 👎: the vote posted with the right run id; marked sent or failed; read back after a reload; an in-flight vote never overwritten |
 | `panel-size.test.ts` | 7 | panel sizes: kept within limits, saved and restored, safe when browser storage is blocked |
@@ -96,7 +118,7 @@ Two GitHub Actions workflows, both without secrets.
 | Job | Runs |
 |---|---|
 | `web` | `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` (Vitest), then `pnpm test:e2e` (production build + Playwright against the fake agent). A failed run keeps the Playwright traces as an artifact |
-| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 200 pass, 6 skip because they need API keys |
+| `agent` | an **import check with only the deployed dependencies** (`uv sync --no-dev`), proving the image LangSmith builds is complete; then the graph is validated and loaded into a throwaway Neo4j 5.26 and the fast pytest suite runs on **Python 3.12**, the deployment's version: 289 pass, 7 skip because they need API keys |
 
 **`data-integrity.yml`, the data check**, on pull requests that touch `data/`, `etl/` or `mock_crm/` (or the workflow itself):
 
@@ -106,9 +128,9 @@ Two GitHub Actions workflows, both without secrets.
 
 Loading twice matters: a fresh, empty database can't have stale edges, so a single load would pass the audit whatever the loader does. Loading over existing data is what exercises the loader's stale-edge cleanup (`MERGE` alone only ever adds edges).
 
-## In production
+## Evaluation
 
-Testing doesn't stop at deployment. Every real conversation is scored in LangSmith: 3 code checks (citations exist, walk replies show their checklist, the customer rule held) and 7 Jev judges (made-up facts, contradictions, usefulness, retrieval relevance and knowledge gaps), with alerts to Slack and consultants' 👍 👎 on each answer. See `eval/eval_plan.md`.
+Evaluation is separate from testing: the offline eval scores the agent on golden examples before a change ships, and the online eval scores every real conversation. See the README's Evaluation section and `eval/README.md`. The offline eval runs in CI too (`offline-eval.yml`), on pull requests that change the agent, its data, the mock CRM, the loaders or the eval.
 
 ## Bugs pinned by a test
 
@@ -121,6 +143,12 @@ Testing doesn't stop at deployment. Every real conversation is scored in LangSmi
 | A 👍 filed on the wrong run | `test_sources.py` (the run id is the root run) |
 | Live replies missing their citations, sources and run id | `message.test.ts`, `chat.spec.ts` |
 | An unreachable agent leaving the page on "Working on it…" | `errors.spec.ts` |
+| Signing in sending you to another site (`/login?next=/\evil.com`) | `safe-next.test.ts` |
 | A vote overwritten while still being sent | `use-feedback.test.ts` |
 | Custom routes answering without the API key | `deploy/smoke.py` |
 | A Python 3.12-only crash hidden by 3.14 | the CI `agent` job runs the suite on 3.12 |
+| One busy moment at Jev (529 Overloaded) or a dropped connection failing a consultant's message | `test_supervisor.py` (retried up to 3 times, 10 s timeout) |
+| "Why did you cite KB-006?" answered without the article (and the citation disowned) | `test_supervisor.py` (the agent reads it) |
+| A knowledge-base question with a colon ("Policy question: …") failing the whole search | `test_graph_rag_chain.py` (query syntax escaped) |
+| A follow-up ("and after the first year?") searched and matched as typed, without the question before it | `test_supervisor.py`, `test_graph_rag_chain.py` (every step reads the rewrite) |
+| A Jev outage counted as wrong answers in the offline eval | `eval/test_offline_walks.py` (errored runs ask for a rerun) |
