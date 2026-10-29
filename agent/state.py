@@ -44,6 +44,8 @@ class SuperAgentState(MessagesState, total=False):
     # the path classify_intent chose; the last three end the turn with a fixed reply
     intent: Literal["troubleshooting", "open_ended", "explain", "irrelevant", "unclear", "injection"]
     matched_procedure_id: Optional[str]  # which procedure to walk: set by match_procedure, else None
+    follow_up: bool  # the new message needs the earlier ones to be understood (check_message): a
+                     # troubleshooting or general follow-up is rewritten first (rewrite_question)
     error: Optional[str]  # set when a node fails, so the request stops with a message
 
 

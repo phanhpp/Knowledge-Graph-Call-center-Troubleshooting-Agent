@@ -10,10 +10,11 @@ Flow of one turn:
                 v
           check_message (Jev, on the last 3 messages: a prompt injection? a follow-up?)
                 |  injection: fixed_reply (refuse) -> END
-                |  follow-up: rewrite_question (Claude: rewritten to stand on its own; every step after reads it)
                 v
           classify_intent (Jev, on the last 3 messages: which path?)
                 |  unclear or irrelevant: fixed_reply (ask to rephrase / not my job) -> END
+                |  a troubleshooting or general follow-up: rewrite_question first (Claude: rewritten
+                |    to stand on its own, for match_procedure and the knowledge-base search)
                 |
       +---------+------------------------------+------------------+
       v                                        v                  v
@@ -240,19 +241,18 @@ def _latest_message(state: SuperAgentState):
     return as_seen(state["messages"][-1])
 
 
-_CONTEXT_MESSAGES = 3  # the routing Jev calls: the new message, after the question and answer before it
+_CONTEXT_MESSAGES = 3  # check_message, classify_intent, rewrite_question: the new message, after the question and answer before it
 
 
 def _recent_messages(state: SuperAgentState) -> list:
-    """What check_message, rewrite_question and classify_intent see: the new message, after the
-    previous question and answer (just the new message on a first turn), each as the agent reads it
-    (as_seen: an earlier follow-up's rewrite, once it has one).
+    """What check_message and classify_intent see: the new message, after the previous question and
+    answer (just the new message on a first turn), as typed.
 
     A follow-up can't be judged alone: "how come?" asks about the last answer, and "and after the
     first year?" is a general question only next to the cancellation-fee question before it. Three
     messages, not the whole conversation: older turns, often about other customers, stay out of the call.
     """
-    return [as_seen(m) for m in state["messages"][-_CONTEXT_MESSAGES:]]
+    return state["messages"][-_CONTEXT_MESSAGES:]
 
 
 # The path question classify_intent asks.
@@ -345,16 +345,15 @@ _FOLLOW_UP = Noul(
 )
 
 
-def check_message(state: SuperAgentState) -> Command[Literal["fixed_reply", "rewrite_question", "classify_intent"]]:
+def check_message(state: SuperAgentState) -> Command[Literal["fixed_reply", "classify_intent"]]:
     """Screen the consultant's new message before routing it, with one Jev call asking two questions
     about it: is it a prompt-injection attempt (_PROMPT_INJECTION), and does it need the earlier
     messages to be understood (_FOLLOW_UP)?
 
-      - a likely injection (_INJECTION_THRESHOLD or more): refused by fixed_reply. Judged on what was
-        typed, before any rewrite: a rewrite could retell an attack as a clean request;
-      - a follow-up (_FOLLOW_UP_THRESHOLD or more, after an earlier message): rewrite_question first,
-        so every later step reads a message that stands on its own;
-      - otherwise straight to classify_intent.
+      - a likely injection (_INJECTION_THRESHOLD or more): refused by fixed_reply, as typed;
+      - otherwise classify_intent. `follow_up` (_FOLLOW_UP_THRESHOLD or more, after an earlier message)
+        is saved for route(): a troubleshooting or general follow-up is rewritten before the step that
+        reads it alone (rewrite_question).
 
     Also clears matched_procedure_id: the state is saved between turns, and only match_procedure sets it.
     """
@@ -369,12 +368,11 @@ def check_message(state: SuperAgentState) -> Command[Literal["fixed_reply", "rew
         round(injection.noul, 2) if injection is not None else None,
         round(follow_up.noul, 2) if follow_up is not None else None,
     )
-    update = {"matched_procedure_id": None}
+    follows_up = follow_up is not None and follow_up.noul >= _FOLLOW_UP_THRESHOLD and len(state["messages"]) > 1
+    update = {"matched_procedure_id": None, "follow_up": follows_up}
     if injection is not None and injection.noul >= _INJECTION_THRESHOLD:
         logger.info("Intent: injection")
         return Command(update={**update, "intent": "injection"}, goto="fixed_reply")
-    if follow_up is not None and follow_up.noul >= _FOLLOW_UP_THRESHOLD and len(state["messages"]) > 1:
-        return Command(update=update, goto="rewrite_question")
     return Command(update=update, goto="classify_intent")
 
 
@@ -389,10 +387,11 @@ class _Standalone(BaseModel):
 
 
 _REWRITE_INSTRUCTIONS = (
-    "Rewrite the consultant's latest message so it can be understood on its own: fill in only what it "
-    "refers to, keep it short, and add nothing else (no details or conclusions from the assistant's "
-    "answers). Keep who it is addressed to: 'how come?' about an answer becomes 'why did you ...?'. "
-    "If it is too vague, return it unchanged."
+    "Rewrite the consultant's latest message so it can be understood on its own: replace only the words "
+    "that point back to earlier messages ('they', 'that', 'the same problem') with what they mean, and add "
+    "nothing else (no details or conclusions from the assistant's answers). A [CUST-…] label says which "
+    "customer a message is about, and 'Sources:' lists the IDs an answer cited. If it is too vague, return "
+    "it unchanged."
 )
 
 
@@ -404,49 +403,56 @@ def _rewrite_model() -> Runnable:
     ).with_structured_output(_Standalone)
 
 
-def rewrite_question(state: SuperAgentState) -> dict:
-    """Rewrite a follow-up so it stands on its own, from the question and answer before it: "and after
-    the first year?" after a cancellation-fee question becomes "Is there a fee to cancel a contract
-    after the first year?". Every later step reads the rewrite (agent/utils.py as_seen): the path
-    (classify_intent), the procedure (match_procedure), the knowledge-base search and answer, the
-    explain agent, and the next turn's routing.
+def rewrite_question(state: SuperAgentState) -> Command[Literal["load_crm", "graph_rag_chain"]]:
+    """Rewrite a troubleshooting or general follow-up so it stands on its own, from the question and
+    answer before it: "and after the first year?" after a cancellation-fee question becomes "Is there
+    a fee to cancel a contract after the first year?". Then on to its path (load_crm or graph_rag_chain).
+
+    Only these two paths need it: match_procedure and the knowledge-base search each read one message.
+    The explain agent reads the conversation itself, and does better with the question as typed (a
+    rewrite turned "why?" into a general question about the procedure).
+
+    Claude sees the 3 messages the way the explain agent does (_labelled_history): each labelled with
+    its customer, each answer with the IDs it cited, which live in its metadata, not its text.
 
     The rewrite is stamped on the consultant's message (`additional_kwargs["standalone"]`), the way
     load_crm stamps the customer ID: the text typed stays, so the web app and Slack show what was
-    written, and a trace shows both. If the call fails, nothing is stamped and the message is
-    answered as typed.
+    written, and a trace shows both. agent/utils.py as_seen gives match_procedure and graph_rag_chain
+    the rewrite. If the call fails, nothing is stamped and the message is answered as typed.
 
     Measured on 11 follow-ups after real answers: with the typed text, "and after the first year?"
     found KB-005 at #3 and "same problem for CUST-1002" matched no procedure; rewritten, KB-005 came
-    first and PROC-001 matched, and all 11 took the right path.
+    first and PROC-001 matched.
     """
-    *earlier, latest = _recent_messages(state)
+    goto = _PATHS[state["intent"]]
+    *earlier, latest = _labelled_history(state["messages"], _CONTEXT_MESSAGES)
     transcript = "\n".join(f"{'Consultant' if m.type == 'human' else 'Assistant'}: {m.content}" for m in earlier)
     try:
         rewritten = _rewrite_model().invoke([
             SystemMessage(_REWRITE_INSTRUCTIONS),
             HumanMessage(f"Earlier messages:\n{transcript}\n\nLatest message: {latest.content}"),
-        ]).message.strip()
+        ]).message
     except Exception:  # an outage or an unreadable answer: better answered as typed than not at all
         logger.warning("Rewrite failed, so the message is answered as typed", exc_info=True)
-        return {}
+        return Command(goto=goto)
+    rewritten = _without_label(rewritten.strip())  # a label copied from the transcript
     logger.info("Rewritten: %s", rewritten)
     message = state["messages"][-1]
     stamped = {**message.additional_kwargs, "standalone": rewritten}
-    return {"messages": [message.model_copy(update={"additional_kwargs": stamped})]}
+    return Command(update={"messages": [message.model_copy(update={"additional_kwargs": stamped})]}, goto=goto)
 
 
 def classify_intent(state: SuperAgentState) -> dict:
     """Decide which path the consultant's new message takes, with one Jev call: which path (_PATH).
-    check_message has already refused injections and sent follow-ups to be rewritten.
+    check_message has already refused injections.
 
     The path is judged on what the consultant wants done, not on the topic: most procedures have a KB
     article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is
     deliberately not shown here; seeing "Contract cancellation request" is what made the old
     classifier send a fee question to that procedure. match_procedure picks the procedure later.
 
-    Jev sees the last 3 messages as the agent reads them (_recent_messages): the new one rewritten
-    if it was a follow-up. The earlier two still help with a follow-up check_message missed.
+    Jev sees the last 3 messages as typed (_recent_messages): a follow-up is classified next to the
+    question and answer it follows.
 
     Decided in this order:
       1. "unclear" (too vague to tell what is wanted): asked to rephrase. Making the request clear is
@@ -517,13 +523,15 @@ def match_procedure(state: SuperAgentState) -> dict:
     return {"matched_procedure_id": pick.choice}
 
 
-def route(state: SuperAgentState) -> Literal["load_crm", "explain_answer", "graph_rag_chain", "fixed_reply"]:
-    """Deterministic routing off the already-classified intent (not LLM-guessed here)."""
-    return {
-        "troubleshooting": "load_crm",
-        "explain": "explain_answer",
-        "open_ended": "graph_rag_chain",
-    }.get(state["intent"], "fixed_reply")  # injection, unclear, irrelevant
+_PATHS = {"troubleshooting": "load_crm", "explain": "explain_answer", "open_ended": "graph_rag_chain"}
+
+
+def route(state: SuperAgentState) -> Literal["load_crm", "explain_answer", "graph_rag_chain", "rewrite_question", "fixed_reply"]:
+    """Deterministic routing off the already-classified intent (not LLM-guessed here). A troubleshooting
+    or general follow-up goes through rewrite_question first; an explanation never does."""
+    if state.get("follow_up") and state["intent"] in ("troubleshooting", "open_ended"):
+        return "rewrite_question"
+    return _PATHS.get(state["intent"], "fixed_reply")  # injection, unclear, irrelevant
 
 
 def route_after_match(state: SuperAgentState) -> Literal["procedural_executor", "graph_rag_chain"]:
@@ -531,7 +539,7 @@ def route_after_match(state: SuperAgentState) -> Literal["procedural_executor", 
     return "procedural_executor" if state.get("matched_procedure_id") else "graph_rag_chain"
 
 
-# A label at the start of a text: the ones _explain_history adds, and "[general]"/"[reply, general]",
+# A label at the start of a text: the ones _labelled_history adds, and "[general]"/"[reply, general]",
 # which older versions added. Claude sometimes copies one into its reply.
 _LABEL = re.compile(r"^(?:\[(?:CUST-\d+|reply about [^\]]*|reply, general|general)\]\s*)+")
 
@@ -541,8 +549,9 @@ def _without_label(text: str) -> str:
     return _LABEL.sub("", text)
 
 
-def _explain_history(messages: list, limit: int) -> list:
-    """The last `limit` messages, those about a customer labelled with it, for explain_answer's agent.
+def _labelled_history(messages: list, limit: int) -> list:
+    """The last `limit` messages, those about a customer labelled with it: what explain_answer's agent
+    sees, and how rewrite_question shows Claude the question and answer before a follow-up.
 
     A consultant message stamped with a customer becomes "[CUST-1001] <text>", and the reply to it
     "[reply about CUST-1001] <text>". A message with no customer ID, and its reply, get no label: it
@@ -558,7 +567,6 @@ def _explain_history(messages: list, limit: int) -> list:
     labelled = []
     customer = None
     for message in window:
-        message = as_seen(message)  # a follow-up's standalone rewrite, if it has one
         text = _without_label(message.content)
         if message.type == "human":
             customer = message.additional_kwargs.get("customer_id")
@@ -586,7 +594,7 @@ def explain_answer(state: SuperAgentState) -> dict:
     KB-006?"), with a small agent that can look things up.
 
     Claude gets the last _EXPLAIN_HISTORY messages, those about a customer labelled with its ID (see
-    _explain_history), so it can follow a conversation that moves between customers and general
+    _labelled_history), so it can follow a conversation that moves between customers and general
     questions. A troubleshooting reply already holds what a "why?" needs: the action, why the walk
     stopped, and every step checked with its value. Replies name procedures, rules and articles by
     ID only, so Claude can read them with read-only tools over a virtual folder of them
@@ -642,7 +650,7 @@ def explain_answer(state: SuperAgentState) -> dict:
         middleware=[ToolCallLimitMiddleware(run_limit=_EXPLAIN_TOOL_CALLS)],
         name="explain_agent",
     )
-    result = agent.invoke({"messages": _explain_history(state["messages"], _EXPLAIN_HISTORY)})
+    result = agent.invoke({"messages": _labelled_history(state["messages"], _EXPLAIN_HISTORY)})
     steps = result["messages"]
     return reply(_without_label(str(steps[-1].text)), looked_up=explain_tools.files_read(steps))
 
@@ -657,7 +665,7 @@ def build_supervisor_graph(checkpointer=None):
     builder.add_node("check_customer", check_customer)  # routes itself (returns a Command)
     builder.add_node("check_neo4j", check_neo4j)  # routes itself
     builder.add_node("check_message", check_message)  # routes itself
-    builder.add_node("rewrite_question", rewrite_question)
+    builder.add_node("rewrite_question", rewrite_question)  # routes itself
     builder.add_node("classify_intent", classify_intent)
     builder.add_node("load_crm", load_crm)  # routes itself
     builder.add_node("match_procedure", match_procedure)
@@ -667,11 +675,10 @@ def build_supervisor_graph(checkpointer=None):
     builder.add_node("fixed_reply", fixed_reply)
 
     builder.add_edge(START, "check_customer")
-    builder.add_edge("rewrite_question", "classify_intent")
     builder.add_conditional_edges(
         "classify_intent",
         route,
-        ["load_crm", "explain_answer", "graph_rag_chain", "fixed_reply"],
+        ["load_crm", "explain_answer", "graph_rag_chain", "rewrite_question", "fixed_reply"],
     )
     builder.add_conditional_edges(
         "match_procedure",

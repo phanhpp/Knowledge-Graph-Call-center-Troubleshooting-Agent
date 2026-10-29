@@ -36,7 +36,7 @@ from agent.supervisor import (
     check_message,
     check_neo4j,
     load_crm,
-    _explain_history,
+    _labelled_history,
     _JEV_TIMEOUT,
     _classifier,
     _with_jev_retry,
@@ -416,13 +416,13 @@ def test_classify_explain_is_allowed_after_an_earlier_answer(monkeypatch):
     assert result["intent"] == "explain"
 
 
-def test_classify_reads_a_follow_ups_rewrite(monkeypatch):
-    """The path is judged on the rewrite, not on the text typed."""
+def test_classify_reads_the_messages_as_typed(monkeypatch):
+    """The path is judged on the conversation as typed: a rewrite is only for the step after."""
     fake = use_jev(monkeypatch, path=choice("open_ended"))
 
     classify_intent({"messages": rewritten_follow_up()})
 
-    assert fake.requests[0]["state"][-1].content == "Is there a fee to cancel a contract after the first year?"
+    assert fake.requests[0]["state"][-1].content == "and after the first year?"
 
 
 def test_classify_irrelevant_stands(monkeypatch):
@@ -466,19 +466,29 @@ def test_check_message_refuses_an_injection_before_any_rewrite(monkeypatch):
     assert command.update["intent"] == "injection"
 
 
-def test_check_message_sends_a_follow_up_to_be_rewritten(monkeypatch):
+def test_check_message_marks_a_follow_up_for_route(monkeypatch):
     use_jev(monkeypatch, prompt_injection=noul(0.02), follow_up=noul(0.95))
 
     command = check_message({"messages": conversation("a fee to cancel?", "Yes", "and after the first year?")})
 
-    assert command.goto == "rewrite_question"
+    assert command.goto == "classify_intent" and command.update["follow_up"] is True
 
 
-def test_check_message_never_rewrites_a_first_message(monkeypatch):
+def test_check_message_never_marks_a_first_message_as_a_follow_up(monkeypatch):
     """Nothing earlier to fill in, whatever Jev says."""
     use_jev(monkeypatch, prompt_injection=noul(0.02), follow_up=noul(0.9))
 
-    assert check_message({"messages": conversation("and after the first year?")}).goto == "classify_intent"
+    assert check_message({"messages": conversation("and after the first year?")}).update["follow_up"] is False
+
+
+@pytest.mark.parametrize("intent, expected", [
+    ("troubleshooting", "rewrite_question"), ("open_ended", "rewrite_question"),
+    ("explain", "explain_answer"), ("unclear", "fixed_reply"),
+])
+def test_route_rewrites_only_a_troubleshooting_or_general_follow_up(intent, expected):
+    """match_procedure and the knowledge-base search read one message; the explain agent reads the
+    whole conversation, so an explanation is never rewritten."""
+    assert route({"intent": intent, "follow_up": True}) == expected
 
 
 def test_check_message_sends_an_ordinary_message_to_classify_intent(monkeypatch):
@@ -517,9 +527,10 @@ def test_rewrite_question_stamps_the_rewrite_and_keeps_the_text_typed(monkeypatc
     messages = conversation("Is there a fee to cancel in the first year?", "Yes: it goes down each month.",
                             "and after the first year?")
 
-    update = rewrite_question({"messages": messages})
+    command = rewrite_question({"messages": messages, "intent": "open_ended"})
 
-    stamped = update["messages"][0]
+    assert command.goto == "graph_rag_chain"
+    stamped = command.update["messages"][0]
     assert stamped.id == messages[-1].id and stamped.content == "and after the first year?"
     assert stamped.additional_kwargs["standalone"] == "Is there a fee to cancel a contract after the first year?"
     sent = fake.sent[0][-1].content
@@ -528,10 +539,29 @@ def test_rewrite_question_stamps_the_rewrite_and_keeps_the_text_typed(monkeypatc
     assert sent.endswith("Latest message: and after the first year?")
 
 
+def test_rewrite_question_shows_claude_the_customers_and_the_cited_ids(monkeypatch):
+    """Both live in the messages' metadata, not their text: "that action" or "the first customer" can
+    only be filled in with them."""
+    fake = FakeRewriter("Customer can't activate roaming")
+    monkeypatch.setattr("agent.supervisor._rewrite_model", lambda: fake)
+    messages = [consultant_message("customer cannot activate roaming", "CUST-1001"),
+                AIMessage("Escalate to Tier 2", additional_kwargs={"citations": ["ACT-015", "R012"]}),
+                consultant_message("same problem here", "CUST-1002")]
+
+    rewrite_question({"messages": messages, "intent": "troubleshooting"})
+
+    sent = fake.sent[0][-1].content
+    assert "Consultant: [CUST-1001] customer cannot activate roaming" in sent
+    assert "Sources: ACT-015, R012" in sent
+    assert sent.endswith("Latest message: [CUST-1002] same problem here")
+
+
 def test_rewrite_question_failing_leaves_the_message_as_typed(monkeypatch):
     monkeypatch.setattr("agent.supervisor._rewrite_model", lambda: FakeRewriter(error=RuntimeError("overloaded")))
 
-    assert rewrite_question({"messages": conversation("a fee to cancel?", "Yes", "and after a year?")}) == {}
+    command = rewrite_question({"messages": conversation("a fee to cancel?", "Yes", "and after a year?"), "intent": "troubleshooting"})
+
+    assert command.goto == "load_crm" and not command.update
 
 
 def test_match_procedure_reads_a_follow_ups_rewrite(monkeypatch):
@@ -544,10 +574,11 @@ def test_match_procedure_reads_a_follow_ups_rewrite(monkeypatch):
     assert fake.requests[0]["state"].content == "Customer cannot activate roaming"
 
 
-def test_explain_history_reads_a_follow_ups_rewrite():
-    history = _explain_history(rewritten_follow_up(), limit=10)
+def test_the_explain_agent_reads_the_question_as_typed():
+    """It reads the conversation itself; a rewrite made its answers worse ("why?" became a general question)."""
+    history = _labelled_history(rewritten_follow_up(), limit=10)
 
-    assert history[-1].content == "Is there a fee to cancel a contract after the first year?"
+    assert history[-1].content == "and after the first year?"
 
 
 @pytest.mark.parametrize("intent, text", [("injection", INJECTION_REPLY), ("unclear", UNCLEAR), ("irrelevant", IRRELEVANT)])
@@ -695,13 +726,13 @@ def test_explain_stops_looking_things_up_after_the_limit(monkeypatch):
     assert len(result["messages"][-1].additional_kwargs["looked_up"]) == 4
 
 
-# --- _explain_history ---
+# --- _labelled_history ---
 
 
-def test_explain_history_keeps_the_last_messages_and_starts_on_a_consultant_message():
+def test_labelled_history_keeps_the_last_messages_and_starts_on_a_consultant_message():
     """Only the last `limit` messages are kept, and a reply cut off from its question is dropped
     (Claude needs the conversation to start with the consultant)."""
-    history = _explain_history(A_THEN_B_THEN_A, limit=4)
+    history = _labelled_history(A_THEN_B_THEN_A, limit=4)
 
     assert [m.content for m in history] == [
         "[CUST-1005] customer cannot activate roaming",
@@ -710,17 +741,17 @@ def test_explain_history_keeps_the_last_messages_and_starts_on_a_consultant_mess
     ]
 
 
-def test_explain_history_leaves_a_message_with_no_customer_id_unlabelled():
+def test_labelled_history_leaves_a_message_with_no_customer_id_unlabelled():
     """A message with no customer ID may be a general question or a follow-up like "why?" about a
     customer's answer, so it and its reply get no label (a "[general]" label once misled Claude)."""
     messages = [*A_THEN_B_THEN_A[:2], HumanMessage("why did it end up at Tier 2?"), AIMessage("All three checks said no")]
 
-    history = _explain_history(messages, limit=10)
+    history = _labelled_history(messages, limit=10)
 
     assert [m.content for m in history[2:]] == ["why did it end up at Tier 2?", "All three checks said no"]
 
 
-def test_explain_history_does_not_label_a_saved_reply_twice():
+def test_labelled_history_does_not_label_a_saved_reply_twice():
     """A reply saved with a label in its text (copied by Claude, or added by an older version) is
     labelled once, from its stamp."""
     messages = [
@@ -730,7 +761,7 @@ def test_explain_history_does_not_label_a_saved_reply_twice():
         AIMessage("[reply, general] [reply, general] It is waived once a year"),
     ]
 
-    history = _explain_history(messages, limit=10)
+    history = _labelled_history(messages, limit=10)
 
     assert [m.content for m in history] == [
         "[CUST-1001] why?",
