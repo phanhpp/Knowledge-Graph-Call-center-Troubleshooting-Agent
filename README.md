@@ -388,7 +388,7 @@ An injection, unclear and irrelevant get a fixed reply: no search, no Claude cal
 | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
 | your machine     | the offline eval                                     | any time (command below)                                            |
 | CI, every PR     | the tests of the eval: seconds, no keys              | every PR                                                            |
-| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change the agent, its data, the mock CRM, the loaders or the eval |
+| CI, offline eval | the offline eval, with its gate (`offline-eval.yml`) | PRs that change the agent, its data, the mock CRM, the loaders or the eval (not docs alone, not on merge) |
 
 
 

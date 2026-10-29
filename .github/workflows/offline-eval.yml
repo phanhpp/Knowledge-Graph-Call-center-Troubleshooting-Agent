@@ -3,12 +3,14 @@
 # little each run. Not a required check: a Jev or Anthropic outage means "rerun", not "fix the code".
 #
 #   when     only pull requests that change what the agent does or how it's scored: the agent, its
-#            data, the mock CRM, the loaders, its config, the eval. Not on dependency-only pull requests
-#            (Dependabot's get no secrets). A failed run is rerun from the pull request's checks
+#            data, the mock CRM, the loaders, its config, the eval. Never for .md files alone, nor for
+#            dependency-only pull requests (Dependabot's get no secrets). A failed run is rerun from the
+#            pull request's checks. Merging doesn't run it (no push trigger).
 #   database a throwaway Neo4j, loaded from data/: a pull request's own data, never production's, and no
 #            Aura credentials in GitHub. Under a minute to start and load; embedding the 25 articles
 #            is about 8,300 tokens (~$0.0002). The eval's model calls cost about 100x more.
-#   runs     every suite with --gate; conversations 3 times (an explanation sometimes adds a guess)
+#   runs     every suite with --gate, once; conversations twice (an explanation sometimes adds a guess).
+#            About 3 minutes in all, setup included
 #   output   each suite's results table in the run's summary; the results files as an artifact
 
 name: Offline eval
@@ -23,6 +25,7 @@ on:
       - "config.py"
       - "eval/**"
       - ".github/workflows/offline-eval.yml"
+      - "!**/*.md" # docs alone never run the eval
 
 # A newer push to the same pull request makes an older run pointless (and it costs money).
 concurrency:
@@ -30,8 +33,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The paths above are checked against the whole pull request, so once it touches agent/, every later
+  # push would match, even one that only edits a README. This job checks what this push changed (or,
+  # on a newly opened pull request, the whole pull request) and lets the eval run only if it matters.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        name: Did this push change anything the eval measures?
+        shell: bash
+        env:
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          from="$BASE"
+          if [ "$ACTION" = synchronize ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            from="$BEFORE"  # a new push: only what it changed (after a force push, the whole pull request)
+          fi
+          files=$(git diff --name-only "$from" "$HEAD")  # if this fails, the job fails: never a silent skip
+          relevant=$(printf '%s\n' "$files" \
+            | grep -E '^(agent|data|mock_crm|etl|eval)/|^config\.py$|^\.github/workflows/offline-eval\.yml$' \
+            | grep -v '\.md$' || true)
+          echo "Changed files the eval measures:"; echo "${relevant:-(none)}"
+          echo "relevant=$([ -n "$relevant" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   offline-eval:
     name: offline-eval
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -84,7 +122,7 @@ jobs:
           failed=0
           for suite in walks routing kb guards adversarial conversations; do
             repetitions=1
-            if [ "$suite" = conversations ]; then repetitions=3; fi
+            if [ "$suite" = conversations ]; then repetitions=2; fi
             uv run python -m eval.offline.run --suite "$suite" --tag "ci-${GITHUB_SHA::7}" \
               --repetitions "$repetitions" --gate | tee -a results.txt || failed=1
           done

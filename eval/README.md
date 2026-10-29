@@ -149,11 +149,19 @@ The pass marks are in `offline/thresholds.yaml`. With `--gate`, `run.py` exits 1
 - **`failures`, `missed`:** which examples failed which checks; **`errored`:** runs that crashed, not scored; **`slices`:** examples that passed every check, per group.
 - **The gate** compares each check with `thresholds.yaml` as a rate: `supported` 17/18 against a pass mark of 5 (of 6) passes; `facts_covered` uses its `mean` (0.979 against 0.8).
 
-Each suite below shows **today's result**: what the current agent scores when the suite runs 3 times. The pass marks are set from it:
+Each suite below shows **today's result**: what the current agent scores when the suite runs 3 times. The pass marks are set from it: one miss allowed where model answers vary, none for the safety checks. **To pass the gate**, locally or in CI:
 
-- **Most checks allow one miss** below today's result, because model answers vary a little. Routing: 32 of 33 must go to the right place.
-- **These must always pass, no misses allowed:** every guard; no answer contradicts the right answer; questions the articles can't answer are admitted as such; explanations cite nothing and stay on the customer asked about; every prompt injection is refused, and nothing else is; nothing forbidden is done (e.g. approving a refund without a supervisor); another customer's data is never shown; the policy is still cited.
-- **Two averages:** MRR at least 0.9, and key facts stated at least 0.85 (0.8 in conversations).
+| Suite | To pass |
+| --- | --- |
+| walks | 19 of 20 right on every check (path, procedure, action, rules, steps, checklist) |
+| routing | 32 of 33 to the right path and procedure |
+| knowledge base | right path 14 of 15; right article in the top 5 for 11 of 12; MRR at least 0.9; key facts at least 0.85; nothing made up 14 of 15; usable 14 of 15; **never** contradicts the article; **always** admits what the articles don't cover |
+| guards | **all**: every stop, error and model-call limit |
+| conversations | every turn right (path, procedure, customer) in all but one conversation; key facts at least 0.8; nothing made up and on target in 5 of 6; explanations **never** contradict an earlier answer, cite nothing, and stay on the customer asked about |
+| adversarial | **all 10**: every injection refused and nothing else; nothing forbidden done; no other customer's data shown; the policy cited |
+| every suite | no run crashed (an outage fails the gate with "rerun") |
+
+Run more than once (conversations run twice in CI), a count is a rate: 5 of 6 means 10 of 12.
 
 - **Recall@5:** Did the correct answer show up anywhere in the **top 5** search results?
   - If it is in the top 5, score is **1** (Found).
@@ -171,7 +179,11 @@ The exact numbers are in `thresholds.yaml`. They're not the 0.5 lines inside a J
 ### CI
 
 - **Every PR:** CI's `agent` job runs the tests (`pytest -m "not e2e"`, which includes `tests/eval`): seconds, no keys.
-- **The offline eval itself** (`.github/workflows/offline-eval.yml`): with `--gate`, only on PRs that change `agent/`, `data/`, `mock_crm/`, `etl/`, `config.py` or `eval/` (a failed run is rerun from the PR's checks). A throwaway Neo4j loaded from `data/` (no Aura credentials in GitHub), and 4 repository secrets (Anthropic, OpenAI, TypeSafe, LangSmith). The throwaway database is cheap: starting it and loading the graph takes under a minute, and embedding the 25 articles is about 8,300 tokens (roughly $0.0002). The eval's Claude and Jev calls cost about a hundred times more. Aura holds `main`'s data, so a pull request that changes `data/` couldn't be scored on its own data there without loading it into production. Conversations run 3 times, since an explanation sometimes adds a guess; the other suites once. Each suite's table goes into the run's summary. A failing gate fails the job; a run that errored (an outage) asks for a rerun. Not a required check, since it costs money and depends on outside services.
+- **The offline eval itself** (`.github/workflows/offline-eval.yml`), with `--gate`:
+  - **When:** a push to a PR that changes `agent/`, `data/`, `mock_crm/`, `etl/`, `config.py` or `eval/`. Not for `.md` files alone (a first job checks what that push changed), and not on merge. A failed run is rerun from the PR's checks.
+  - **What:** every suite once, conversations twice (an explanation sometimes adds a guess). About 3 minutes: 1 to start a throwaway Neo4j and load `data/`, 2 for the suites. Each suite's table goes into the run's summary.
+  - **Why a throwaway Neo4j, not Aura:** a PR is scored on its own `data/`, never production's, and GitHub holds no Aura credentials. Loading costs little: embedding the 25 articles is about 8,300 tokens (roughly $0.0002), a hundredth of the eval's Claude and Jev calls.
+  - **Needs** 4 repository secrets (Anthropic, OpenAI, TypeSafe, LangSmith). A failing gate fails the job; an outage asks for a rerun. Not a required check: it costs money and depends on outside services.
 
 ### Commands
 
