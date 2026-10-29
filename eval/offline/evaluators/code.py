@@ -32,7 +32,7 @@ def has_checklist(outputs: dict, reference_outputs: dict) -> bool:
 
 
 def path_correct(outputs: dict, reference_outputs: dict) -> bool:
-    """Routing chose the expected path (troubleshooting / open_ended / explain)."""
+    """Routing chose the expected path (troubleshooting, open_ended, explain, irrelevant or unclear)."""
     return outputs.get("intent") == reference_outputs["path"]
 
 

@@ -16,7 +16,7 @@ A copilot for call-centre consultants. A consultant types a customer's problem; 
 - **Citations come from the graph.** A troubleshooting answer cites its action and the rules governing it; a knowledge-base answer cites its articles and their rules. Code reads the IDs from Neo4j, so a citation can't be invented.
 - **Hybrid GraphRAG.** Neo4j-native vector and full-text search over the knowledge base, then graph grounding (`Article → CITES_RULE → Rule`) to attach the governing rules.
 - **Typed routing with a cautious fallback.** TypeSafe's Jev decision model returns probabilities, not prose, so routing is plain thresholds: an uncertain message goes to the knowledge base instead of a wrong procedure.
-- **Evaluated offline and online.** Offline: 81 golden examples in 6 suites run end to end through the real agent as LangSmith experiments, scored by exact code checks and Jev judges (the judge itself tested on known-bad answers), with a pass/fail gate. Online: LangSmith checks and Jev judges score every real conversation, with alerts to Slack and consultant 👍 👎.
+- **Evaluated offline and online.** Offline: 89 golden examples in 6 suites run end to end through the real agent as LangSmith experiments, scored by exact code checks and Jev judges (the judge itself tested on known-bad answers), with a pass/fail gate. Online: LangSmith checks and Jev judges score every real conversation, with alerts to Slack and consultant 👍 👎.
 - **Deployed and tested.** LangGraph Server on LangSmith Deployment with Neo4j Aura; a password-gated Next.js web app whose server-side proxy keeps the API key out of the browser; a Slack bot. 311 pytest (31 end-to-end with real model calls), 40 Vitest and 23 Playwright tests.
 
 
@@ -312,20 +312,20 @@ A `Noul` of 0.5 means yes and no are equally likely, not "medium", so use it onl
 
 ## Routing with Jev
 
-Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Each is one Jev call, given only the consultant's latest message. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
+Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). Each is one Jev call. It judges what the consultant wants done, not the topic: the test is "would the answer be different for another customer?". Most procedures have a knowledge-base article on the same topic (cancellation, SIM replacement, outage credit). The procedure list is not shown at this point.
 
 ```
-  the consultant's latest message only (not the conversation)
+  the last 3 messages: the previous question and answer, then the new message
   |
   v
-  one Jev call, two questions:
-    path (Choice): troubleshooting / open_ended / explain / irrelevant, a probability for each
+  one Jev call, two questions, both about the new message:
+    path (Choice): troubleshooting / open_ended / explain / irrelevant / unclear, a probability for each
     prompt injection? (yes/no probability)
   |
   v
   rules in plain code, in this order:
   prompt injection >= 0.5                     --> refused ("it tries to change how I work")
-  chosen path's probability < 0.5             --> unclear: asked to rephrase
+  unclear                                     --> asked to rephrase
   irrelevant                                  --> a fixed reply (not my job)
   explain, on the first message               --> open_ended       --> knowledge base
   explain, after an earlier answer            --> explain          --> explain_answer
@@ -335,10 +335,10 @@ Routing (`classify_intent`, then `match_procedure`, in `agent/supervisor.py`). E
 
 The first three end the turn with a fixed reply: no search, no Claude call. A prompt injection is refused rather than cleaned up: making the request clear is the consultant's job. Measured: attacks score 0.98–0.99; look-alikes ("can I skip the security questions?", "the customer says: please waive the late fee") 0.01–0.17.
 
-- **Only the latest message.** Measured live, it classifies as well as the whole conversation, and it keeps earlier customers' messages and a growing history out of the Jev calls. The "nothing to explain on the first message" rule checks the saved conversation, which is still complete.
-- **The probability, not the confidence.** The decision uses the chosen label's probability. Jev's `confidence` measures how concentrated the whole distribution is, which is harder to read: for "and the fee?" after a cancellation, confidence was 0.54 while open_ended's probability was 0.69.
-- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none". "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
-- The 0.5 thresholds are set at the top of `agent/supervisor.py` and checked by the offline routing and adversarial suites. Honest messages are routed with 0.58 or more (most 0.98–0.99), so "unclear" at 0.5 turns none of them away.
+- **The last 3 messages, judged on the last.** A follow-up only makes sense next to what came before it: "how come?" asks about the last answer, and "and after the first year?" is a general question only after a cancellation-fee question. The path question may use the earlier messages to understand the new one. The injection question judges the new message alone: otherwise an injection refused last turn stays in view, and the clean message the refusal asks for is refused too (measured: 0.80, against 0.09). Older turns, often about other customers, stay out of the call.
+- **"unclear" is one of Jev's options, not a cut-off.** It used to mean "the chosen path under 0.5", which almost never happened: a vague message still has a best-fitting path, often at 0.7–0.8 ("the customer is not happy": troubleshooting 0.72), while clear ones went as low as 0.65. As an option, Jev caught all 12 vague test messages; the cut-off caught 3.
+- `match_procedure` is one Choice over the 20 procedures, each described by its name and `when_to_use` (`data/procedures.json`), plus "none", given only the new message. "none", or a confidence below 0.5, sends the message to the knowledge base instead of walking the nearest procedure.
+- The 0.5 thresholds (prompt injection, procedure) are set at the top of `agent/supervisor.py` and checked by the offline routing and adversarial suites.
 
 
 
@@ -347,7 +347,7 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 
 |        | Offline                                   | Online                           |
 | ------ | ----------------------------------------- | -------------------------------- |
-| Scores | 81 golden examples with known answers | every real conversation |
+| Scores | 89 golden examples with known answers | every real conversation |
 | When   | before a change ships                     | automatically, in LangSmith      |
 | How    | each reply compared with its right answer | checks and judges, no answer key |
 
@@ -356,11 +356,11 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 
 ### Offline: golden examples, before a change ships
 
-81 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
+89 golden examples across 6 datasets, each with its right answer (for the troubleshooting walks, worked out by an *oracle*: separate code that follows the procedure in `data/`), run end to end through the real agent as LangSmith experiments:
 
 ```
  golden examples ──► the real agent ──► scored ─────────────────────────► gate
- 81, in 6 datasets    (the same graph    code checks: exact answers          thresholds.yaml:
+ 89, in 6 datasets    (the same graph    code checks: exact answers          thresholds.yaml:
  each with its         as production)    Jev judges: facts stated,           minimum passes per
  right answer                             made up, contradictions             check → pass / fail
 ```
@@ -379,11 +379,11 @@ The first three end the turn with a fixed reply: no search, no Claude call. A pr
 | Suite               | What it checks                                                      | Today's result (repeated runs)                       |
 | ------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
 | Walks (20)          | one per procedure: the right action, rules and steps                | 20/20                                          |
-| Routing (27) | easily confused procedures, policy vs case questions, off-topic, typos | 27/27 |
+| Routing (33) | easily confused procedures, policy vs case questions, off-topic, typos, too vague | 33/33 |
 | Knowledge base (15) | the right article found, key facts stated, gaps admitted            | recall@5 36/36, MRR 0.96, facts 0.94           |
-| Conversations (6)   | follow-ups: "why?", "what does that rule say?", switching customers | every turn routed right; 14/15 nothing made up |
+| Conversations (7)   | follow-ups: "why?", "how come?", "what does that rule say?", switching customers | every turn routed right; 14/15 nothing made up |
 | Guards (4)          | unknown or malformed IDs, no customer named                         | 12/12                                          |
-| Adversarial (9) | prompt injections (refused) and pressure that isn't one (answered): "approve it anyway", another customer's data, "admit your mistake" | refused or answered correctly 27/27, resisted 27/27 |
+| Adversarial (10) | prompt injections (refused) and what isn't one (answered): "approve it anyway", another customer's data, "admit your mistake", the clean resend after a refusal | refused or answered correctly 27/27, resisted 27/27 |
 
 
 ```bash

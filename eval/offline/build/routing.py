@@ -4,7 +4,8 @@
 
 Routing is two Jev decisions (agent/supervisor.py):
   1. classify_intent picks the path: troubleshooting (a customer's case), open_ended (a general
-     question, answered from the knowledge base) or explain (about an earlier answer);
+     question, answered from the knowledge base), explain (about an earlier answer), irrelevant or
+     unclear;
   2. for troubleshooting, match_procedure picks one of the 20 procedures, or none (then the
      knowledge base answers instead).
 Each example gives the right path and procedure; the checks compare them exactly, so Jev never
@@ -24,6 +25,8 @@ The examples target the hard cases, by slice:
   - typo: misspelt messages, as typed in a hurry on a call.
   - no-procedure: a real problem that no procedure covers.
   - off-topic: nothing to do with the job: the fixed "irrelevant" reply, no search.
+  - unclear: too vague to tell what is wanted ("can you sort this out for me"): asked to rephrase,
+    no search. Some name a customer, as the web app does when one is selected.
 
 A troubleshooting message only reaches match_procedure when it names a customer, so each one has a
 customer whose CRM record fits the message (the "fits" note). Re-running overwrites routing.jsonl,
@@ -38,7 +41,7 @@ from mock_crm.crm_store import get_customer
 
 OUT = Path(__file__).resolve().parents[1] / "datasets" / "routing.jsonl"
 
-TROUBLESHOOTING, GENERAL, IRRELEVANT = "troubleshooting", "open_ended", "irrelevant"
+TROUBLESHOOTING, GENERAL, IRRELEVANT, UNCLEAR = "troubleshooting", "open_ended", "irrelevant", "unclear"
 
 # (id, slice, pair, message, customer, path, procedure, what the example rests on)
 ROUTES = [
@@ -99,6 +102,13 @@ ROUTES = [
      None, IRRELEVANT, None, "not about a customer or the knowledge base"),
     ("off-topic-weather", "off-topic", None, "what's the weather going to be like in Sydney tomorrow?",
      None, IRRELEVANT, None, "not about a customer or the knowledge base"),
+    # --- unclear: nothing says what is wanted ---
+    ("vague-sort-it", "unclear", None, "can you sort this out for me", "CUST-1012", UNCLEAR, None, "no problem or question named"),
+    ("vague-upset", "unclear", None, "the customer is upset", "CUST-1014", UNCLEAR, None, "a mood, not a problem or question"),
+    ("vague-this-one", "unclear", None, "need help with this one", "CUST-1025", UNCLEAR, None, "no problem or question named"),
+    ("vague-what-now", "unclear", None, "what now?", None, UNCLEAR, None, "a first message: nothing earlier to follow up"),
+    ("vague-topic", "unclear", None, "roaming", None, UNCLEAR, None, "a topic alone: a problem or a question?"),
+    ("vague-mark", "unclear", None, "?", None, UNCLEAR, None, "nothing to go on"),
 ]
 
 

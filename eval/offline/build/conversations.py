@@ -16,6 +16,8 @@ from the customer's CRM record) or from a cited rule's wording (data/rules.json)
   kb-follow-up         a knowledge-base answer, then a follow-up question on the same topic
   one-customer         three turns on one customer: a walk, "why?", then a new problem without
                        naming the customer again (the current customer must carry over)
+  short-follow-ups     a walk, then "how come?" (only clear next to the answer before it), then
+                       "hmm ok so" (unclear: asked to rephrase)
 
 Re-running overwrites conversations.jsonl, so edit this script, not the file.
 """
@@ -102,6 +104,15 @@ CONVERSATIONS = {
         ]),
         ({"text": "they're abroad now and the phone shows no bars at all", "customer_id": None},
          {"path": "troubleshooting", "procedure_id": "PROC-014", "customer_after": "CUST-1044"}),
+    ],
+    # CUST-1002: roaming off -> PROC-001 step 1 yes -> enable roaming (ACT-001)
+    "short-follow-ups": [
+        walk("customer can't turn roaming on before their trip", "CUST-1002", "PROC-001"),
+        explain("how come?", "CUST-1002", [
+            "roaming is switched off on the customer's account",
+        ]),
+        ({"text": "hmm ok so", "customer_id": None},
+         {"path": "unclear", "procedure_id": None, "customer_after": "CUST-1002"}),
     ],
 }
 

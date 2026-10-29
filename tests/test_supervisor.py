@@ -345,17 +345,27 @@ def test_a_bad_jev_key_is_not_retried(no_wait):
 # --- classify_intent, with a fake Jev ---
 
 
-def test_classify_shows_jev_only_the_latest_message_and_not_the_procedures(monkeypatch):
-    """Jev is given the new message only (not the conversation), and no procedure list."""
+def test_classify_shows_jev_the_last_three_messages_and_not_the_procedures(monkeypatch):
+    """Jev is given the new message after the question and answer before it (not the whole
+    conversation), and no procedure list."""
     fake = use_jev(monkeypatch, path=choice("open_ended"))
-    messages = conversation("roaming", "Escalate", "why?")
+    messages = conversation("roaming", "Escalate", "is there a fee to cancel?", "Yes: $50", "and after a year?")
 
     classify_intent({"messages": messages, "customer_id": "CUST-1005"})
 
     request = fake.requests[0]
-    assert request["state"] == messages[-1]
+    assert request["state"] == messages[-3:]
     assert list(request["questions"]) == ["path", "prompt_injection"]
     assert "PROC-" not in str(request["questions"])
+
+
+def test_classify_shows_jev_a_first_message_alone(monkeypatch):
+    fake = use_jev(monkeypatch, path=choice("open_ended"))
+    messages = conversation("is there a fee to cancel?")
+
+    classify_intent({"messages": messages})
+
+    assert fake.requests[0]["state"] == messages
 
 
 def test_classify_confident_troubleshooting_leaves_the_procedure_to_match_procedure(monkeypatch):
@@ -367,27 +377,22 @@ def test_classify_confident_troubleshooting_leaves_the_procedure_to_match_proced
     assert result == {"intent": "troubleshooting", "matched_procedure_id": None}
 
 
-def test_classify_with_no_likely_path_asks_to_rephrase(monkeypatch):
-    """When Jev is unsure of the path, the consultant is asked to rephrase: no walk, no search."""
-    use_jev(monkeypatch, path=choice("troubleshooting", 0.3))
+def test_classify_unclear_is_jevs_label(monkeypatch):
+    """A message Jev calls unclear is sent back to be rephrased: no walk, no search."""
+    use_jev(monkeypatch, path=choice("unclear", 0.6))
+
+    result = classify_intent({"messages": conversation("help"), "customer_id": "CUST-1005"})
+
+    assert result["intent"] == "unclear"
+
+
+def test_classify_has_no_probability_cut_off(monkeypatch):
+    """A path Jev picks stands even at a low probability: "unclear" is a label, not a cut-off."""
+    use_jev(monkeypatch, path=choice("troubleshooting", 0.4))
 
     result = classify_intent({"messages": conversation("cancel?"), "customer_id": "CUST-1005"})
 
-    assert result["intent"] == "unclear"
-
-
-def test_classify_threshold_uses_the_troubleshooting_probability_not_confidence(monkeypatch):
-    """Confidence measures how concentrated the distribution is; the decision uses the chosen
-    label's probability. Here confidence is high but troubleshooting is only 40% likely."""
-    spread = ChoiceAnswer(
-        type="choice", choice="troubleshooting", confidence=0.9,
-        probabilities={"troubleshooting": 0.4, "open_ended": 0.35, "explain": 0.25},
-    )
-    use_jev(monkeypatch, path=spread)
-
-    result = classify_intent({"messages": conversation("cancel?"), "customer_id": "CUST-1001"})
-
-    assert result["intent"] == "unclear"
+    assert result["intent"] == "troubleshooting"
 
 
 def test_classify_clears_a_procedure_from_an_earlier_turn(monkeypatch):
@@ -441,11 +446,10 @@ def test_classify_below_the_injection_threshold_takes_the_path(monkeypatch):
     assert result["intent"] == "troubleshooting"
 
 
-@pytest.mark.parametrize("probability, expected", [(0.9, "irrelevant"), (0.4, "unclear")])
-def test_classify_irrelevant_only_when_jev_is_sure(monkeypatch, probability, expected):
-    use_jev(monkeypatch, path=choice("irrelevant", probability))
+def test_classify_irrelevant_stands(monkeypatch):
+    use_jev(monkeypatch, path=choice("irrelevant", 0.6))
 
-    assert classify_intent({"messages": conversation("tell me a joke")})["intent"] == expected
+    assert classify_intent({"messages": conversation("tell me a joke")})["intent"] == "irrelevant"
 
 
 @pytest.mark.parametrize("intent, text", [("injection", INJECTION_REPLY), ("unclear", UNCLEAR), ("irrelevant", IRRELEVANT)])
