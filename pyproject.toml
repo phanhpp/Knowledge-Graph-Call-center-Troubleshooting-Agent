@@ -9,7 +9,7 @@ dependencies = [
     "langchain",
     "langchain-anthropic",
     "neo4j-graphrag[anthropic,openai]>=1.18.0",
-    "langsmith",
+    "langsmith>=0.10.15",
     "slack-bolt>=1.21.0",
     "langgraph-checkpoint-sqlite>=3.1.2",
     "langchain-typesafe>=0.0.1a3",
